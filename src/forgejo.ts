@@ -576,41 +576,12 @@ export class Forgejo {
   }
 
   /**
-   * Migrate (import) an EXTERNAL git repository into `owner` as `repo`. Forgejo
-   * clones the FULL repository (all branches + history). `ref` is NOT a migrate
-   * parameter: when the caller wants a single branch the tool trims the others
-   * after the import (see `repoImport`).
+   * NOTE: external-repo import no longer goes through Forgejo's
+   * `/repos/migrate` (mirror semantics drag in every `refs/pull/*`, which is
+   * multi-GB on a popular upstream). The workspace GATEWAY owns import now:
+   * it creates an empty repo, clones the source's HEAD branches with go-git and
+   * pushes them. See the `repo-import` tool.
    */
-  async migrateRepo(
-    owner: string,
-    opts: {
-      repo: string
-      cloneAddr: string
-      private?: boolean
-      mirror?: boolean
-      description?: string
-      authToken?: string
-      authUser?: string
-      locale?: string
-    },
-  ): Promise<RepoInfo> {
-    const body: Record<string, unknown> = {
-      clone_addr: opts.cloneAddr,
-      repo_name: opts.repo,
-      service: 'git',
-    }
-    if (owner !== '') body['repo_owner'] = owner
-    if (opts.private !== undefined) body['private'] = opts.private
-    if (opts.mirror !== undefined) body['mirror'] = opts.mirror
-    if (opts.description !== undefined && opts.description !== '') body['description'] = opts.description
-    if (opts.authToken !== undefined && opts.authToken !== '') body['auth_token'] = opts.authToken
-    if (opts.authUser !== undefined && opts.authUser !== '') body['auth_username'] = opts.authUser
-    const res = await this.json<Record<string, unknown>>('POST', '/repos/migrate', {
-      body,
-      locale: opts.locale,
-    })
-    return toRepoInfo(res)
-  }
 
   async createTag(org: string, repo: string, name: string, target: string, locale = 'en'): Promise<void> {
     await this.json('POST', `/repos/${seg(org)}/${seg(repo)}/tags`, {
