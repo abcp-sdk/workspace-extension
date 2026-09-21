@@ -1,0 +1,38 @@
+{
+  "name": "@abc-protocol/workspace-extension",
+  "version": "0.1.0",
+  "description": "Workspace extension server: run commands and read/write files in a remote easyworker sandbox, addressed purely by a configurable worker URL + bearer token.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc --emitDeclarationOnly && node scripts/bundle.mjs",
+    "check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@abc-protocol/sdk": "github:abcp-sdk/abc-protocol-typescript#v3.7.0",
+    "@bufbuild/protobuf": "^2.15.0",
+    "@connectrpc/connect": "^2.2.0",
+    "@connectrpc/connect-node": "^2.2.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true
+  }
+}
