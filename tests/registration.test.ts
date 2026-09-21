@@ -71,6 +71,7 @@ const EXPECTED_TOOLS = [
   'sandbox-write',
   // repo-*
   'repo-branch-create',
+  'repo-branch-sync',
   'repo-branches',
   'repo-build-image',
   'service-delete',
@@ -92,6 +93,7 @@ const EXPECTED_TOOLS = [
   'repo-mr-list',
   'repo-mr-merge',
   'repo-read',
+  'repo-restore',
   'repo-show',
   'repo-tag-create',
   'repo-tags',

@@ -391,6 +391,26 @@ export const CATALOG = {
     en: 'Merged pull request #{index} in {org}/{repo}.',
     zh: '已合并 {org}/{repo} 的合并请求 #{index}。',
   },
+  syncClean: {
+    en: 'Synced {org}/{repo}:{branch} with main (no conflicts). New commit {commit}.',
+    zh: '已将 main 同步到 {org}/{repo}:{branch}（无冲突）。新提交 {commit}。',
+  },
+  syncConflicts: {
+    en: 'Synced {org}/{repo}:{branch} with main; {count} file(s) have CONFLICTS and now contain ABCP-CONFLICT marker blocks: {paths}. Resolve each block (keep the correct content, remove all marker lines), then commit. repo-mr-create/repo-mr-merge will refuse the branch until every marker is gone.',
+    zh: '已将 main 同步到 {org}/{repo}:{branch}；{count} 个文件存在冲突，现已写入 ABCP-CONFLICT 标记块：{paths}。请逐块解决（保留正确内容并删除所有标记行）后提交。在标记全部清除前，repo-mr-create/repo-mr-merge 会拒绝该分支。',
+  },
+  syncNeedsBranch: {
+    en: 'No branch given and the session is not bound to org:repo:branch; pass org/repo/branch explicitly.',
+    zh: '未提供分支且会话未绑定到 org:repo:branch；请显式传入 org/repo/branch。',
+  },
+  syncMainRefused: {
+    en: 'Refusing to sync the default branch (main).',
+    zh: '拒绝同步默认分支（main）。',
+  },
+  restored: {
+    en: 'Restored {path} in {org}/{repo} to {from} (target {ref}, commit {sha}{binary}).',
+    zh: '已将 {org}/{repo} 的 {path} 恢复为 {from}（目标 {ref}，提交 {sha}{binary}）。',
+  },
   repoExploreHeader: {
     en: '{count} organization(s):',
     zh: '{count} 个组织：',

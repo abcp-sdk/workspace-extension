@@ -65,6 +65,12 @@ export interface CommitFile {
   operation?: 'create' | 'update' | 'delete'
   /** UTF-8 content (ignored for delete). */
   content?: string
+  /**
+   * Raw BYTES for a binary file. Takes precedence over `content`; use this to
+   * restore non-text files losslessly (a JS string would corrupt invalid
+   * UTF-8 sequences).
+   */
+  contentBytes?: Uint8Array
   /** Blob sha for optimistic locking (update/delete). */
   sha?: string
   /** For renames (update only). */
@@ -437,7 +443,11 @@ export class Forgejo {
         path: f.path,
       }
       if (op !== 'delete') {
-        body['content'] = Buffer.from(f.content ?? '', 'utf8').toString('base64')
+        const bytes =
+          f.contentBytes !== undefined
+            ? Buffer.from(f.contentBytes)
+            : Buffer.from(f.content ?? '', 'utf8')
+        body['content'] = bytes.toString('base64')
       }
       if (f.sha !== undefined && f.sha !== '') body['sha'] = f.sha
       if (f.fromPath !== undefined && f.fromPath !== '') body['from_path'] = f.fromPath
@@ -618,7 +628,7 @@ export class Forgejo {
     repo: string,
     state: string,
     locale = 'en',
-  ): Promise<Array<{ index: number; title: string; state: string; head: string; base: string }>> {
+  ): Promise<Array<{ index: number; title: string; state: string; head: string; base: string; mergeable: boolean; merged: boolean }>> {
     const rows = await this.paged<Record<string, unknown>>(
       `/repos/${seg(org)}/${seg(repo)}/pulls`,
       state !== '' ? { state } : {},
@@ -630,6 +640,8 @@ export class Forgejo {
       state: String(p['state'] ?? ''),
       head: String((p['head'] as Record<string, unknown> | undefined)?.['ref'] ?? ''),
       base: String((p['base'] as Record<string, unknown> | undefined)?.['ref'] ?? ''),
+      mergeable: p['mergeable'] === true,
+      merged: p['merged'] === true,
     }))
   }
 

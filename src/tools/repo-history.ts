@@ -198,7 +198,10 @@ export async function repoTagCreate(
   }
 }
 
-/** `repo-mr-create`: open a pull request. */
+/** `repo-mr-create`: open a pull request.
+ *
+ * Routed through the GATEWAY so its conflict-marker gate applies (a branch
+ * carrying unresolved ABCP-CONFLICT markers is refused). */
 export async function repoMrCreate(
   ctx: RepoCtx,
   args: Record<string, unknown>,
@@ -208,9 +211,7 @@ export async function repoMrCreate(
   const head = requireName(requireArg(args, 'head', ctx.locale), 'head', ctx.locale)
   const base = requireName(requireArg(args, 'base', ctx.locale), 'base', ctx.locale)
   const body = strArg(args, 'body')
-  const res = await ctx.forgejo.createPull(r.org, r.repo, {
-    title, head, base, ...(body !== '' ? { body } : {}), locale: ctx.locale,
-  })
+  const res = await ctx.gateway.createMR({ org: r.org, repo: r.repo, title, head, base, body })
   return {
     content: tr(ctx.locale, 'repoMrCreated', { index: res.index, org: r.org, repo: r.repo, url: res.url }),
     data: { index: res.index, url: res.url },
@@ -226,7 +227,12 @@ export async function repoMrList(
   const state = strArg(args, 'state')
   const pulls = await ctx.forgejo.listPulls(r.org, r.repo, state, ctx.locale)
   if (pulls.length === 0) return { content: tr(ctx.locale, 'repoMrListHeader', { org: r.org, repo: r.repo, count: 0 }) }
-  const lines = pulls.map(p => `#${p.index} [${p.state}] ${p.head} -> ${p.base}  ${p.title}`)
+  const lines = pulls.map(p => {
+    // A conflicted/diverged PR is explicitly flagged so a maintainer can
+    // dispatch the branch session to sync before merging.
+    const state = p.merged ? 'merged' : p.mergeable || p.state !== 'open' ? p.state : `${p.state} CONFLICT`
+    return `#${p.index} [${state}] ${p.head} -> ${p.base}  ${p.title}`
+  })
   return {
     content: tr(ctx.locale, 'repoMrListHeader', { org: r.org, repo: r.repo, count: pulls.length }) + '\n' + lines.join('\n'),
     data: { pulls },
@@ -246,7 +252,10 @@ export async function repoMrComment(
   return { content: tr(ctx.locale, 'repoMrCommented', { index, org: r.org, repo: r.repo }), data: { index } }
 }
 
-/** `repo-mr-merge`: merge a pull request. */
+/** `repo-mr-merge`: merge a pull request (maintainer).
+ *
+ * Routed through the GATEWAY: it refuses when the PR is not mergeable, or when
+ * the head branch still carries unresolved conflict markers. */
 export async function repoMrMerge(
   ctx: RepoCtx,
   args: Record<string, unknown>,
@@ -254,6 +263,6 @@ export async function repoMrMerge(
   const r = repoRef(args, ctx.locale)
   const index = Math.trunc(numArg(args, 'index') ?? 0)
   if (index <= 0) throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'index' }))
-  await ctx.forgejo.mergePull(r.org, r.repo, index, ctx.locale)
+  await ctx.gateway.mergeMR({ org: r.org, repo: r.repo, index })
   return { content: tr(ctx.locale, 'repoMrMerged', { index, org: r.org, repo: r.repo }), data: { index } }
 }

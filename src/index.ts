@@ -72,6 +72,7 @@ import {
   repoTags,
 } from './tools/repo-history.js'
 import { repoCreateOrg, repoCreateRepo, repoImport } from './tools/repo-admin.js'
+import { repoBranchSync, repoRestore } from './tools/repo-sync.js'
 import { repoMailSend, type MailCtx } from './tools/mail.js'
 import { sandboxCheckout, sandboxPort, type BridgeCtx } from './tools/bridge.js'
 import {
@@ -369,6 +370,8 @@ export function createWorkspaceConfig(
     'repo-mr-list': repoWrap(repoMrList),
     'repo-mr-comment': repoWrap(repoMrComment),
     'repo-mr-merge': repoWrap(repoMrMerge),
+    'repo-branch-sync': repoWrap(repoBranchSync),
+    'repo-restore': repoWrap(repoRestore),
   }
 
   const tools: Record<string, ToolSpec> = {}
@@ -1185,6 +1188,32 @@ const TOOL_META: Record<string, ToolMeta> = {
         index: int('Pull request number.', '合并请求编号。'),
       },
       ['org', 'repo', 'index'],
+    ),
+    required: REPO_REQUIRED,
+  },
+  'repo-branch-sync': {
+    description: 'Catch a feature branch up with main by committing a merge of main into it. Files changed on both sides are merged automatically; genuine conflicts are written into the branch as ABCP-CONFLICT marker blocks that YOU must resolve (edit the file, then commit) before repo-mr-create/repo-mr-merge will accept the branch. Defaults to the current session\'s org/repo/branch.',
+    descriptions: { zh: '将 main 合并进功能分支，使分支追平 main。两侧都改动的文件自动合并；真正的冲突会以 ABCP-CONFLICT 标记块写入分支，必须由本会话解决（编辑文件后提交）才能通过 repo-mr-create/repo-mr-merge。默认使用当前会话的 org/repo/branch。' },
+    inputSchema: obj(
+      {
+        ...REPO_ADDR,
+        branch: str('Feature branch (default: the session\'s branch).', '功能分支（默认：当前会话的分支）。'),
+      },
+      [],
+    ),
+    required: REPO_REQUIRED,
+  },
+  'repo-restore': {
+    description: 'Restore ONE file on a branch to its exact content at another ref or commit (binary-safe). Use it to recover a file version during conflict resolution.',
+    descriptions: { zh: '把分支上的某个文件恢复为另一 ref 或提交时的确切内容（二进制安全）。用于解决冲突时找回文件版本。' },
+    inputSchema: obj(
+      {
+        ...REPO_ADDR,
+        path: str('Repo-relative file path.', '仓库内文件路径。'),
+        from: str('Source ref or commit sha to restore from.', '用于恢复的源 ref 或提交 sha。'),
+        ref: str('Target branch (default: the repo default branch).', '目标分支（默认：仓库默认分支）。'),
+      },
+      ['org', 'repo', 'path', 'from'],
     ),
     required: REPO_REQUIRED,
   },
