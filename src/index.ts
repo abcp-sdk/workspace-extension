@@ -88,7 +88,7 @@ import { repoBuildImage, type BuildCtx } from './tools/imagebuild.js'
 import { serviceDelete, serviceDeploy, serviceList, type ServiceCtx } from './tools/services.js'
 
 export const EXT_ID = 'workspace'
-export const EXT_VERSION = '0.14.0'
+export const EXT_VERSION = '0.14.1'
 
 /** Config names (re-exported for tests). */
 export const CONFIG_MANAGER_URL = CONFIG.gatewayUrl

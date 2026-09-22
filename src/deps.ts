@@ -51,12 +51,15 @@ export interface WorkspaceDeps {
   ) => Promise<void>
   /** Delete the session's read-before-edit state (session deletion). */
   clearEditState: (tenant: string, sessionName: string) => Promise<void>
-  /** Publish a message into a session's durable NATS mailbox (wakes its turn). */
+  /** Publish a message into a session's durable NATS mailbox (wakes its turn).
+   *  `source` is the message ORIGIN (`user` / `session:{name}` / `system:{name}`),
+   *  carried to the agent so a consumer can tell a hand-off from a human prompt. */
   publishMailbox: (
     tenant: string,
     sessionName: string,
     type: string,
     payload: unknown,
+    source?: string,
   ) => Promise<void>
 }
 
@@ -135,9 +138,9 @@ export function agentFileDeps(bus: Bus): WorkspaceDeps {
         0,
       )
     },
-    publishMailbox: async (tenant, sessionName, type, payload) => {
+    publishMailbox: async (tenant, sessionName, type, payload, source) => {
       const t = requireTenant(tenant, 'publishMailbox')
-      await publishMailboxEvent(bus, t, sessionName, type, payload)
+      await publishMailboxEvent(bus, t, sessionName, type, payload, source ?? '')
     },
     clearEditState: async (tenant, sessionName) => {
       if (sessionName === '') return
