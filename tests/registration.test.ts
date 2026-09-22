@@ -146,8 +146,8 @@ describe('workspace extension registration', () => {
     const names = (manifest?.tools ?? []).map(t => t.name).sort()
     expect(names).toEqual(EXPECTED_TOOLS)
 
-    // Per-tool gating: sandbox-* needs the gateway, repo-* needs forgejo-url,
-    // the bridge needs both.
+    // Per-tool gating: sandbox-* and repo-* both need the gateway; the bridge
+    // needs it too (repo checkout/port now go through the gateway).
     for (const t of manifest?.tools ?? []) {
       const expected = t.name === 'sandbox-checkout' || t.name === 'sandbox-port'
         ? BRIDGE_REQUIRED

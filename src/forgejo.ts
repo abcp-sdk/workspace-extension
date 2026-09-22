@@ -77,13 +77,20 @@ export interface CommitResult {
 
 /** Map a gateway Connect error to a typed tool error (keeps tool messages). */
 function gatewayError(e: unknown, locale: string): TypedToolError {
-  const err = e as { code?: string; message?: string }
-  const code = err?.code ?? ''
-  const msg = err?.message ?? String(e)
-  if (code === 'not_found') return new TypedToolError('not_found', tr(locale, 'forgejoNotFound', { msg }))
-  if (code === 'permission_denied') return new TypedToolError('permission_denied', tr(locale, 'forgejoUnauthorized', { status: 403, msg }))
-  if (code === 'failed_precondition' || code === 'aborted') return new TypedToolError('retryable', tr(locale, 'forgejoConflict', { msg }))
-  if (code === 'invalid_argument') return new TypedToolError('invalid_argument', tr(locale, 'forgejoInvalid', { msg }))
+  const err = e as { code?: unknown; message?: string }
+  const msg = (err?.message ?? String(e)).replace(/^\[[a-z_]+\]\s*/, '')
+  // connect-es `code` is a numeric enum; its own toString renders the
+  // snake_case name. Match on the stringified form so both shapes work.
+  const raw = `${err?.code ?? ''} ${e}`.toLowerCase()
+  const has = (name: string) => raw.includes(name)
+  if (has('not_found')) return new TypedToolError('not_found', tr(locale, 'forgejoNotFound', { msg }))
+  if (has('permission_denied') || has('unauthenticated')) {
+    return new TypedToolError('permission_denied', tr(locale, 'forgejoUnauthorized', { status: 403, msg }))
+  }
+  if (has('failed_precondition') || has('aborted')) {
+    return new TypedToolError('retryable', tr(locale, 'forgejoConflict', { msg }))
+  }
+  if (has('invalid_argument')) return new TypedToolError('invalid_argument', tr(locale, 'forgejoInvalid', { msg }))
   return new TypedToolError('internal', msg)
 }
 

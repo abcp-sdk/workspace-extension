@@ -124,6 +124,15 @@ describe('Forgejo (gateway-backed)', () => {
     await expect(conflict.listOrgs()).rejects.toMatchObject({ code: 'retryable' })
   })
 
+  it('maps a connect-es ConnectError (numeric code + [code] message) too', async () => {
+    // connect-es throws ConnectError where `code` is a NUMERIC enum and
+    // toString() renders "[not_found] repository not found".
+    const err = Object.assign(new Error('[not_found] repository not found'), { code: 5 })
+    const { gateway } = fakeGateway({ listOrgs: err })
+    const fj = new Forgejo({ gateway })
+    await expect(fj.listOrgs()).rejects.toMatchObject({ code: 'not_found' })
+  })
+
   it('resolves a ref via repoMeta default branch', async () => {
     const { gateway, calls } = fakeGateway()
     const fj = new Forgejo({ gateway })

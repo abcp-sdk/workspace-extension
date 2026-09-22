@@ -5,7 +5,6 @@ import { tr } from './i18n.js'
 export const CONFIG = {
   gatewayUrl: 'gateway-url',
   gatewayToken: 'gateway-token',
-  forgejoUrl: 'forgejo-url',
 } as const
 
 /** sandbox-* tools require the workspace gateway (sandbox lifecycle). */
