@@ -36,7 +36,7 @@ export async function materializeLifecycle(
   locale: string,
 ): Promise<void> {
   const self = parseSessionName(ev.session_name)
-  if (self === null) return // non-workspace session (planner/explorer)
+  if (self === null) return // non-workspace session (explorer/admin)
 
   switch (ev.kind) {
     case 'created': {
