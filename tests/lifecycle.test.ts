@@ -3,29 +3,33 @@ import type { LifecycleEvent } from '@abc-protocol/sdk'
 import { Forgejo } from '../src/forgejo.js'
 import { materializeLifecycle, parseSessionName } from '../src/tools/lifecycle.js'
 
-/** A fake Forgejo recording branch operations. */
+/** A gateway-backed Forgejo recording branch creation. */
 function fakeForgejo(initial: string[] = ['main']) {
+  const calls: Array<{ method: string; req: Record<string, unknown> }> = []
   const branches = new Set<string>(initial)
   const created: Array<{ name: string; from: string }> = []
-  const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
-    const u = String(url)
-    const method = init?.method ?? 'GET'
-    if (u.includes('/branches') && method === 'POST') {
-      const body = JSON.parse(String(init!.body)) as { new_branch_name: string; old_ref_name: string }
-      created.push({ name: body.new_branch_name, from: body.old_ref_name })
-      branches.add(body.new_branch_name)
-      return new Response('{}')
-    }
-    if (u.includes('/branches') && method === 'GET') {
-      const rows = [...branches].map(name => ({ name, commit: { id: 'sha' } }))
-      return new Response(JSON.stringify(rows))
-    }
-    if (u.includes('/repos/') && method === 'GET') {
-      return new Response(JSON.stringify({ default_branch: 'main' }))
-    }
-    return new Response('{}', { status: 404 })
-  }) as unknown as typeof fetch
-  return { branches, created, forgejo: new Forgejo({ url: 'http://f.test', auth: { token: 'x' }, fetchImpl }) }
+  const gateway = new Proxy(
+    {},
+    {
+      get: (_t, prop: string) =>
+        async (req: Record<string, unknown>) => {
+          calls.push({ method: prop, req })
+          if (prop === 'branches') {
+            return { branches: [...branches].map(name => ({ name, sha: 'sha' })) }
+          }
+          if (prop === 'createBranch') {
+            created.push({ name: req['name'] as string, from: req['from'] as string })
+            branches.add(req['name'] as string)
+            return { ok: true }
+          }
+          if (prop === 'repoMeta') {
+            return { org: req['org'], repo: req['repo'], defaultBranch: 'main', private: true, empty: false }
+          }
+          return {}
+        },
+    },
+  )
+  return { branches, created, forgejo: new Forgejo({ gateway: gateway as never }) }
 }
 
 function ev(kind: LifecycleEvent['kind'], session: string, parent?: string): LifecycleEvent {

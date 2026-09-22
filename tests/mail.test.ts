@@ -2,20 +2,20 @@ import { describe, expect, it } from 'vitest'
 import { Forgejo } from '../src/forgejo.js'
 import { repoMailSend, type MailCtx } from '../src/tools/mail.js'
 
-/** A fake Forgejo whose branch list is fixed. */
+/** A gateway-backed Forgejo whose branch list is fixed. */
 function fakeForgejo(branches: string[]) {
-  const fetchImpl = (async (url: string | URL) => {
-    const u = String(url)
-    if (u.includes('/branches')) {
-      const rows = branches.map(name => ({ name, commit: { id: 'sha' } }))
-      return new Response(JSON.stringify(rows))
-    }
-    if (u.includes('/repos/')) {
-      return new Response(JSON.stringify({ default_branch: 'main' }))
-    }
-    return new Response('{}', { status: 404 })
-  }) as unknown as typeof fetch
-  return new Forgejo({ url: 'http://f.test', auth: { token: 'x' }, fetchImpl })
+  const gateway = new Proxy(
+    {},
+    {
+      get: (_t, prop: string) =>
+        async (req: Record<string, unknown>) => {
+          if (prop === 'branches') return { branches: branches.map(name => ({ name, sha: 'sha' })) }
+          if (prop === 'repoMeta') return { org: req['org'], repo: req['repo'], defaultBranch: 'main', private: true, empty: false }
+          return {}
+        },
+    },
+  )
+  return new Forgejo({ gateway: gateway as never })
 }
 
 /** A fake gateway recording ensure calls; returns a fixed session. */

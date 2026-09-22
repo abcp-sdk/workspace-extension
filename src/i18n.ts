@@ -223,10 +223,6 @@ export const CATALOG = {
     en: "worker {name} is not configured; set it in the extension's tool settings",
     zh: '未配置 worker {name}；请在扩展的工具设置中填写。',
   },
-  forgejoNoAuth: {
-    en: 'Forgejo auth is not configured; set forgejo-token, or both forgejo-user and forgejo-password',
-    zh: '未配置 Forgejo 鉴权；请设置 forgejo-token，或同时设置 forgejo-user 与 forgejo-password。',
-  },
   fileToolsRequireBus: {
     en: 'file tools require an agent bus (download/upload)',
     zh: '文件工具需要 agent bus（download/upload）。',

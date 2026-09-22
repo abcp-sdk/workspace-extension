@@ -7,25 +7,18 @@ import { CONFIG } from '../src/config.js'
  * Live end-to-end against a REAL Forgejo (and a REAL easyworker for the
  * checkout/port bridge). Set:
  *   LIVE_NATS_URL  e.g. nats://<nats>:4222
- *   FORGEJO_URL    e.g. http://forgejo.example
- *   FORGEJO_TOKEN  a PAT (preferred)
- *   FORGEJO_USER / FORGEJO_PASSWORD  used when FORGEJO_TOKEN is empty
- *   E2E_ORG / E2E_REPO  an existing repo the credential may write to
- *   MANAGER_URL / MANAGER_TOKEN  optional; enables the checkout/port test
+ *   GATEWAY_URL / GATEWAY_TOKEN  the workspace gateway (repo tools go through it)
+ *   E2E_ORG / E2E_REPO  an existing repo the tenant owns
  *   E2E_IMAGE  a worker image for the checkout/port test
- * Skipped unless LIVE_NATS_URL, FORGEJO_URL and E2E_ORG/E2E_REPO are set.
+ * Skipped unless LIVE_NATS_URL, GATEWAY_URL and E2E_ORG/E2E_REPO are set.
  */
 const LIVE_NATS = process.env['LIVE_NATS_URL'] ?? ''
-const FORGEJO_URL = process.env['FORGEJO_URL'] ?? ''
-const FORGEJO_TOKEN = process.env['FORGEJO_TOKEN'] ?? ''
-const FORGEJO_USER = process.env['FORGEJO_USER'] ?? ''
-const FORGEJO_PASSWORD = process.env['FORGEJO_PASSWORD'] ?? ''
+const GATEWAY_URL = process.env['GATEWAY_URL'] ?? ''
+const GATEWAY_TOKEN = process.env['GATEWAY_TOKEN'] ?? ''
 const E2E_ORG = process.env['E2E_ORG'] ?? ''
 const E2E_REPO = process.env['E2E_REPO'] ?? ''
-const MANAGER_URL = process.env['MANAGER_URL'] ?? ''
-const MANAGER_TOKEN = process.env['MANAGER_TOKEN'] ?? ''
 const E2E_IMAGE = process.env['E2E_IMAGE'] ?? ''
-const hasRepo = LIVE_NATS !== '' && FORGEJO_URL !== '' && E2E_ORG !== '' && E2E_REPO !== ''
+const hasRepo = LIVE_NATS !== '' && GATEWAY_URL !== '' && E2E_ORG !== '' && E2E_REPO !== ''
 const maybe = hasRepo ? describe : describe.skip
 
 maybe('live e2e: workspace repo-* tools against a real Forgejo', () => {
@@ -59,17 +52,8 @@ maybe('live e2e: workspace repo-* tools against a real Forgejo', () => {
 
     const tenant = 'e2e'
     const session = 'e2e-repo-session'
-    await agent.setConfig(tenant, 'workspace', CONFIG.forgejoUrl, FORGEJO_URL)
-    if (FORGEJO_TOKEN !== '') {
-      await agent.setConfig(tenant, 'workspace', CONFIG.forgejoToken, FORGEJO_TOKEN)
-    } else {
-      await agent.setConfig(tenant, 'workspace', CONFIG.forgejoUser, FORGEJO_USER)
-      await agent.setConfig(tenant, 'workspace', CONFIG.forgejoPassword, FORGEJO_PASSWORD)
-    }
-    if (MANAGER_URL !== '') {
-      await agent.setConfig(tenant, 'workspace', CONFIG.managerUrl, MANAGER_URL)
-      await agent.setConfig(tenant, 'workspace', CONFIG.managerToken, MANAGER_TOKEN)
-    }
+    await agent.setConfig(tenant, 'workspace', CONFIG.gatewayUrl, GATEWAY_URL)
+    await agent.setConfig(tenant, 'workspace', CONFIG.gatewayToken, GATEWAY_TOKEN)
     await new Promise(r => setTimeout(r, 800))
 
     const call = async (tool: string, args: Record<string, unknown>) => {
@@ -138,7 +122,7 @@ maybe('live e2e: workspace repo-* tools against a real Forgejo', () => {
   }, 120_000)
 
   it('checks out the repo into the sandbox and ports a new file back', async () => {
-    if (MANAGER_URL === '' || E2E_IMAGE === '') return // no manager: skip bridge part
+    if (E2E_IMAGE === '') return // no image: skip bridge part
     const bus = await connectNatsBus(LIVE_NATS)
     stops.push(() => bus.close())
 
@@ -159,10 +143,8 @@ maybe('live e2e: workspace repo-* tools against a real Forgejo', () => {
     const tenant = 'e2e'
     const session = 'e2e-bridge-session'
     for (const [k, v] of [
-      [CONFIG.forgejoUrl, FORGEJO_URL],
-      [CONFIG.forgejoToken, FORGEJO_TOKEN],
-      [CONFIG.managerUrl, MANAGER_URL],
-      [CONFIG.managerToken, MANAGER_TOKEN],
+      [CONFIG.gatewayUrl, GATEWAY_URL],
+      [CONFIG.gatewayToken, GATEWAY_TOKEN],
     ] as Array<[string, string]>) {
       await agent.setConfig(tenant, 'workspace', k, v)
     }

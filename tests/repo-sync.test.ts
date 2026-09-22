@@ -12,7 +12,7 @@ interface SyncCall {
 function syncCtx(result: { clean: boolean; conflicts?: string[]; commit?: string }, session = 'acme:web:feature/x') {
   const calls: SyncCall[] = []
   const c = {
-    forgejo: new Forgejo({ url: 'http://f.test', auth: { token: 'x' } }),
+    forgejo: new Forgejo({ gateway: {} as never }),
     gateway: {
       async syncBranch(r: SyncCall) {
         calls.push(r)

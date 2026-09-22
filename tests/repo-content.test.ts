@@ -10,39 +10,41 @@ import {
   type RepoCtx,
 } from '../src/tools/repo-content.js'
 
-/** In-memory repo backing a real Forgejo client over a fake fetch. */
+/**
+ * In-memory repo backing a real gateway-backed Forgejo client. The file map is
+ * `path -> { text, sha }`; sha is bumped per mutation so the read-before-edit
+ * freshness check works.
+ */
 function fakeRepo() {
   const files = new Map<string, { text: string; sha: string }>()
   let n = 0
   const sha = () => `sha${++n}`
-  const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
-    const u = String(url)
-    const method = init?.method ?? 'GET'
-    // ChangeFiles commit endpoint.
-    if (u.endsWith('/contents') && method === 'POST') {
-      const body = JSON.parse(String(init!.body))
-      const ops = body.files as Array<{ operation: string; path: string; content?: string; sha?: string }>
-      for (const f of ops) {
-        if (f.operation === 'delete') {
-          files.delete(f.path)
-          continue
-        }
-        const text = Buffer.from(f.content ?? '', 'base64').toString()
-        files.set(f.path, { text, sha: sha() })
-      }
-      return new Response(JSON.stringify({ files: [{ last_commit_sha: sha() }] }))
-    }
-    const m = /\/contents\/(.+?)(\?|$)/.exec(u)
-    if (m === null) return new Response('{}', { status: 404 })
-    const path = decodeURIComponent(m[1]!)
-    if (method === 'GET') {
-      const f = files.get(path)
-      if (f === undefined) return new Response('not found', { status: 404 })
-      return new Response(JSON.stringify({ type: 'file', encoding: 'base64', content: Buffer.from(f.text).toString('base64'), sha: f.sha, size: f.text.length }))
-    }
-    return new Response('{}', { status: 404 })
-  }) as unknown as typeof fetch
-  return { files, forgejo: new Forgejo({ url: 'http://f.test', auth: { token: 'x' }, fetchImpl }) }
+  const gateway = new Proxy(
+    {},
+    {
+      get: (_t, prop: string) =>
+        async (req: Record<string, unknown>) => {
+          if (prop === 'contents') {
+            const f = files.get(req['path'] as string)
+            if (f === undefined) throw { code: 'not_found', message: 'not found' }
+            return { isDir: false, text: f.text, sha: f.sha, size: BigInt(f.text.length) }
+          }
+          if (prop === 'commitFiles') {
+            for (const f of (req['files'] as Array<Record<string, unknown>>) ?? []) {
+              const p = f['path'] as string
+              if (f['operation'] === 'delete') { files.delete(p); continue }
+              const bytes = f['contentBytes'] as Uint8Array | undefined
+              const text = bytes !== undefined && bytes.length > 0 ? new TextDecoder().decode(bytes) : (f['content'] as string) ?? ''
+              files.set(p, { text, sha: sha() })
+            }
+            return { sha: sha() }
+          }
+          if (prop === 'repoMeta') return { org: req['org'], repo: req['repo'], defaultBranch: 'main', private: true, empty: false }
+          return {}
+        },
+    },
+  )
+  return { files, forgejo: new Forgejo({ gateway: gateway as never }) }
 }
 
 function ctx(forgejo: Forgejo): RepoCtx {

@@ -18,19 +18,7 @@ export async function repoCreateOrg(
   if (!validComponent(org)) {
     throw new TypedToolError('invalid_argument', tr(ctx.locale, 'invalidName', { key: 'org', value: org }))
   }
-  const visibility = strArg(args, 'visibility')
-  const res = await ctx.forgejo.createOrg({
-    org,
-    ...(strArg(args, 'full-name') !== '' ? { fullName: strArg(args, 'full-name') } : {}),
-    ...(strArg(args, 'description') !== '' ? { description: strArg(args, 'description') } : {}),
-    ...(visibility === 'public' || visibility === 'limited' || visibility === 'private'
-      ? { visibility }
-      : {}),
-    ...(strArg(args, 'email') !== '' ? { email: strArg(args, 'email') } : {}),
-    ...(strArg(args, 'location') !== '' ? { location: strArg(args, 'location') } : {}),
-    ...(strArg(args, 'website') !== '' ? { website: strArg(args, 'website') } : {}),
-    locale: ctx.locale,
-  })
+  const res = await ctx.forgejo.createOrg({ org, locale: ctx.locale })
   return {
     content: tr(ctx.locale, 'repoOrgCreated', { org: res.name }),
     data: { org: res.name },
@@ -38,41 +26,26 @@ export async function repoCreateOrg(
 }
 
 /**
- * `repo-create-repo`: create a repository under `org` (an organization or a
- * user; the client falls back to the authenticated user when `org` is not an
- * organization). Optionally auto-initialized with a default branch.
+ * `repo-create-repo`: create a repository under `org` (the gateway ensures the
+ * org + repo + protected `main` branch and records ownership). The default
+ * branch is always `main`; extra init options are not supported by the gateway.
  */
 export async function repoCreateRepo(
   ctx: RepoCtx,
   args: Record<string, unknown>,
 ): Promise<ToolResultData> {
   const r = repoRef(args, ctx.locale)
-  const autoInit = args['auto-init'] === true
-  const priv = args['private'] === true
-  const res = await ctx.forgejo.createRepo(r.org, {
-    repo: r.repo,
-    private: priv,
-    autoInit,
-    ...(strArg(args, 'default-branch') !== '' ? { defaultBranch: strArg(args, 'default-branch') } : {}),
-    ...(strArg(args, 'description') !== '' ? { description: strArg(args, 'description') } : {}),
-    ...(strArg(args, 'readme') !== '' ? { readme: strArg(args, 'readme') } : {}),
-    ...(strArg(args, 'gitignores') !== '' ? { gitignores: strArg(args, 'gitignores') } : {}),
-    ...(strArg(args, 'license') !== '' ? { license: strArg(args, 'license') } : {}),
-    locale: ctx.locale,
-  })
+  await ctx.gateway.ensureRepo({ org: r.org, repo: r.repo })
   // Auto-create the repo's `main` branch session (repo:branch <-> session, 1:1).
   // Best-effort: a repo is still usable if this fails.
   try {
-    await ctx.gateway.ensureBranchSession({ org: r.org, repo: r.repo, branch: res.defaultBranch || 'main' })
+    await ctx.gateway.ensureBranchSession({ org: r.org, repo: r.repo, branch: 'main' })
   } catch {
     /* best effort */
   }
   return {
-    content: tr(ctx.locale, 'repoRepoCreated', {
-      full: res.fullName !== '' ? res.fullName : `${r.org}/${r.repo}`,
-      branch: res.defaultBranch,
-    }),
-    data: { org: res.owner, repo: res.name, default_branch: res.defaultBranch, private: res.private },
+    content: tr(ctx.locale, 'repoRepoCreated', { full: `${r.org}/${r.repo}`, branch: 'main' }),
+    data: { org: r.org, repo: r.repo, default_branch: 'main', private: true },
   }
 }
 

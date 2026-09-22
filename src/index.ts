@@ -19,12 +19,10 @@ import {
   BRIDGE_REQUIRED,
   BUILD_REQUIRED,
   CONFIG,
-  forgejoConfig,
   gatewayConfig,
   type GatewayConfig,
   REPO_REQUIRED,
   SANDBOX_REQUIRED,
-  type ForgejoConfig,
 } from './config.js'
 import { localeOf, tr } from './i18n.js'
 import { materializeLifecycle, parseSessionName } from './tools/lifecycle.js'
@@ -102,8 +100,9 @@ export interface WorkspaceExtensionOpts {
   deps?: WorkspaceDeps
   /** Worker client factory (overridable in tests). */
   makeClient?: (ep: { url: string; token: string }) => WorkerClient
-  /** Forgejo client factory (overridable in tests). */
-  makeForgejo?: (cfg: ForgejoConfig) => Forgejo
+  /** Forgejo-backed repo client factory. It is built OVER a gateway client, so
+   *  every repo operation is tenant-scoped server-side (overridable in tests). */
+  makeForgejo?: (gateway: GatewayClient) => Forgejo
   /** Workspace-gateway client factory (overridable in tests). */
   makeManager?: (cfg: GatewayConfig, tenant: string) => GatewayClient
 }
@@ -122,7 +121,7 @@ export function createWorkspaceConfig(
   const deps = opts.deps ?? (bus !== undefined ? agentFileDeps(bus) : undefined)
   const cache = new WorkerClientCache()
   const makeClient = opts.makeClient ?? ((ep: { url: string; token: string }) => cache.get(ep))
-  const makeForgejo = opts.makeForgejo ?? ((cfg: ForgejoConfig) => new Forgejo({ url: cfg.url, auth: cfg.auth }))
+  const makeForgejo = opts.makeForgejo ?? ((gateway: GatewayClient) => new Forgejo({ gateway }))
   const makeManager =
     opts.makeManager ?? ((cfg: GatewayConfig, tenant: string) => createGatewayClient(cfg.url, cfg.token, tenant))
 
@@ -149,7 +148,7 @@ export function createWorkspaceConfig(
   }
 
   const repoClient = (session: string, tenant: string, locale: string): Forgejo =>
-    makeForgejo(forgejoConfig(opts.getConfig, session, tenant, locale))
+    makeForgejo(managerFor(session, tenant, locale))
 
   /** Resolve the sandbox named by `worker-name` to a live worker client. */
   const resolveWorkerClient = async (
@@ -449,34 +448,6 @@ const CONFIG_SPECS: Record<string, ConfigSpec> = {
     scope: 'global',
     description: 'Service token the workspace-gateway requires for sandbox RPCs.',
     descriptions: { zh: 'workspace-gateway 在沙箱 RPC 上要求的服务令牌。' },
-  },
-  [CONFIG.forgejoUrl]: {
-    type: 'string',
-    default: '',
-    scope: 'global',
-    description: 'Base URL of the Forgejo instance (e.g. http://forgejo.example).',
-    descriptions: { zh: 'Forgejo 实例的基础地址（如 http://forgejo.example）。' },
-  },
-  [CONFIG.forgejoToken]: {
-    type: 'string',
-    default: '',
-    scope: 'global',
-    description: 'Forgejo personal access token (preferred over user/password).',
-    descriptions: { zh: 'Forgejo 个人访问令牌（优先于用户名/密码）。' },
-  },
-  [CONFIG.forgejoUser]: {
-    type: 'string',
-    default: '',
-    scope: 'global',
-    description: 'Forgejo username (used only when forgejo-token is empty).',
-    descriptions: { zh: 'Forgejo 用户名（仅当 forgejo-token 为空时使用）。' },
-  },
-  [CONFIG.forgejoPassword]: {
-    type: 'string',
-    default: '',
-    scope: 'global',
-    description: 'Forgejo password (used only when forgejo-token is empty).',
-    descriptions: { zh: 'Forgejo 密码（仅当 forgejo-token 为空时使用）。' },
   },
 }
 
@@ -832,30 +803,19 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: REPO_REQUIRED,
   },
   'repo-create-org': {
-    description: 'Create a Forgejo organization. `org` is the organization slug. Requires a credential allowed to create organizations (e.g. an admin PAT).',
-    descriptions: { zh: '创建 Forgejo 组织。`org` 为组织标识（slug）。需要具备创建组织权限的凭据（如管理员 PAT）。' },
+    description: 'Create an organization owned by the caller\'s tenant (idempotent). The gateway creates it under the shared Forgejo credential.',
+    descriptions: { zh: '创建归属于调用方租户的组织（幂等）。gateway 用共享的 Forgejo 凭据创建。' },
     inputSchema: obj(
       {
         org: str('Organization slug to create (required).', '要创建的组织标识（必填）。'),
-        'full-name': str('Display name.', '显示名称。'),
-        description: str('Description.', '描述。'),
-        visibility: {
-          type: 'string',
-          enum: ['public', 'limited', 'private'],
-          description: 'Visibility (default public).',
-          descriptions: { zh: '可见性（默认 public）。' },
-        },
-        email: str('Contact email.', '联系邮箱。'),
-        location: str('Location.', '所在地。'),
-        website: str('Website.', '网站。'),
       },
       ['org'],
     ),
     required: REPO_REQUIRED,
   },
   'repo-create-repo': {
-    description: 'Create a repository under `org` (an organization or a user; falls back to the authenticated user when not an org). Optionally auto-initialized with a default branch.',
-    descriptions: { zh: '在 `org`（组织或用户；若不是组织则回退到当前认证用户）下创建仓库。可选自动初始化并设定默认分支。' },
+    description: 'Create a repository under `org` (the gateway ensures the org + repo + a protected `main` branch and records ownership). The default branch is always `main`.',
+    descriptions: { zh: '在 `org` 下创建仓库（gateway 负责确保组织 + 仓库 + 受保护的 `main` 分支，并记录归属）。默认分支固定为 `main`。' },
     inputSchema: obj(
       {
         ...REPO_ADDR,
@@ -864,16 +824,6 @@ const TOOL_META: Record<string, ToolMeta> = {
           description: 'Create a private repository.',
           descriptions: { zh: '创建私有仓库。' },
         },
-        'auto-init': {
-          type: 'boolean',
-          description: 'Initialize the repository with a README + initial commit.',
-          descriptions: { zh: '用 README + 初始提交初始化仓库。' },
-        },
-        'default-branch': str('Default branch (used when auto-init is true).', '默认分支（auto-init 为 true 时使用）。'),
-        description: str('Repository description.', '仓库描述。'),
-        readme: str('Readme template (with auto-init).', 'README 模板（配合 auto-init）。'),
-        gitignores: str('.gitignore template (with auto-init).', '.gitignore 模板（配合 auto-init）。'),
-        license: str('License template (with auto-init).', '许可证模板（配合 auto-init）。'),
       },
       ['org', 'repo'],
     ),

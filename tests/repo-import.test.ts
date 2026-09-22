@@ -24,7 +24,7 @@ interface ImportCall {
 function ctx(result: { org?: string; repo?: string; defaultBranch?: string } = {}) {
   const imported: ImportCall[] = []
   const c = {
-    forgejo: new Forgejo({ url: 'http://f.test', auth: { token: 'x' } }),
+    forgejo: new Forgejo({ gateway: {} as never }),
     gateway: {
       async importRepo(r: ImportCall) {
         imported.push(r)

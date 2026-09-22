@@ -159,9 +159,7 @@ describe('workspace extension registration', () => {
       expect(t.required_config, t.name).toEqual(expected)
     }
     const config = (manifest?.config ?? []).map(c => c.name).sort()
-    expect(config).toEqual(
-      [CONFIG.gatewayUrl, CONFIG.gatewayToken, CONFIG.forgejoUrl, CONFIG.forgejoToken, CONFIG.forgejoUser, CONFIG.forgejoPassword].sort(),
-    )
+    expect(config).toEqual([CONFIG.gatewayUrl, CONFIG.gatewayToken].sort())
 
     // Execution tools carry a required worker-name; lifecycle tools do not.
     const byName = new Map((manifest?.tools ?? []).map(t => [t.name, t]))
@@ -199,7 +197,7 @@ describe('workspace extension registration', () => {
     expect('error' in res && res.error).toBeTruthy()
   })
 
-  it('rejects a repo tool call when forgejo auth is missing', async () => {
+  it('rejects a repo tool call when the gateway is not configured', async () => {
     const server = await start({ storage: 'memory' })
     const url = `nats://127.0.0.1:${server.port}`
     stops.push(() => server.stop())
@@ -209,8 +207,8 @@ describe('workspace extension registration', () => {
     const ext = new Extension(
       bus,
       createWorkspaceConfig(bus, {
-        // forgejo-url set, but no token and no user/password.
-        getConfig: name => (name === CONFIG.forgejoUrl ? 'http://forgejo.test' : ''),
+        // No gateway config at all -> repo-* tools are disabled.
+        getConfig: () => '',
         makeClient: stubClient,
         makeForgejo: stubForgejo,
         makeManager: stubManager,
