@@ -191,11 +191,16 @@ export async function repoWrite(
     throw new TypedToolError('invalid_argument', tr(ctx.locale, 'writeTooLarge', { path, bytes, limit: humanSize(120 * 1024) }))
   }
 
-  // Optimistic lock: pass the current blob sha when the file exists.
+  // Optimistic lock: pass the current blob sha when the file exists. Keep the
+  // old text so the card can render a unified diff.
   let baseSha = ''
+  let before = ''
   try {
     const cur = await ctx.forgejo.getContents(r.org, r.repo, path, r.ref, ctx.locale)
-    if (cur.kind === 'file') baseSha = cur.sha
+    if (cur.kind === 'file') {
+      baseSha = cur.sha
+      before = cur.text
+    }
   } catch {
     // absent -> create
   }
@@ -216,9 +221,10 @@ export async function repoWrite(
   await ctx.deps.saveEditState(ctx.tenant, ctx.session, next)
   const fanned = ctx.fanout !== undefined ? await ctx.fanout(r.org, r.repo, r.ref, res.sha) : 0
   const note = fanned > 0 ? `\n${tr(ctx.locale, 'fanoutUpdated', { count: fanned })}` : ''
+  const diff = unifiedDiff(before, content, path)
   return {
     content: tr(ctx.locale, 'repoWrote', { path, org: r.org, repo: r.repo, ref: r.ref || 'HEAD', sha: short(res.sha) }) + note,
-    data: { path, org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, base_sha: baseSha, fanned },
+    data: { path, org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, base_sha: baseSha, added: diff.added, removed: diff.removed, diff: diff.text, fanned },
   }
 }
 
@@ -294,7 +300,7 @@ export async function repoEdit(
   const note = fanned > 0 ? `\n${tr(ctx.locale, 'fanoutUpdated', { count: fanned })}` : ''
   return {
     content: `${summary}\n\n${body}${note}`,
-    data: { path, org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, added: diff.added, removed: diff.removed, fanned },
+    data: { path, org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, added: diff.added, removed: diff.removed, diff: diff.text, fanned },
   }
 }
 
