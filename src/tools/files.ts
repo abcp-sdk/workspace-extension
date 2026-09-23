@@ -123,6 +123,15 @@ export async function writeFile(
     )
   }
 
+  // Best-effort pre-image so the tool card can render a unified diff.
+  let before = ''
+  try {
+    const cur = await ctx.client.fileRead({ path })
+    before = new TextDecoder('utf-8').decode(cur.content)
+  } catch {
+    // new file -> diff against empty
+  }
+
   const wrote = await ctx.client.fileWrite({ path, content: data })
   if (!wrote.ok) {
     throw new TypedToolError('internal', tr(locale, 'writeFailed', { path }))
@@ -155,9 +164,18 @@ export async function writeFile(
     path,
     lines: file.lines.length,
   })
+  const diff = unifiedDiff(before, content, path)
   return {
     content: body === '' ? summary : `${summary}\n\n${body}`,
-    data: { path, bytes: read.content.length, lines: file.lines.length, total_lines: file.lines.length },
+    data: {
+      path,
+      bytes: read.content.length,
+      lines: file.lines.length,
+      total_lines: file.lines.length,
+      added: diff.added,
+      removed: diff.removed,
+      diff: diff.text,
+    },
   }
 }
 
@@ -265,6 +283,7 @@ export async function editFile(
       path,
       added: diff.added,
       removed: diff.removed,
+      diff: diff.text,
       lines: next.length,
       bytes: data.length,
     },
@@ -316,7 +335,18 @@ export async function listFiles(
   const capped = capLines(lines, MAX_RESULT_LINES)
   let content = capped.kept.join('\n')
   if (capped.truncated) content += truncationNote(capped, capped.kept.length, lines.length, ctx.locale)
-  return { content, data: { rows: capped.kept.length } }
+  return {
+    content,
+    data: {
+      rows: capped.kept.length,
+      entries: walk.rows.map(r => ({
+        path: r.path,
+        depth: r.depth,
+        type: r.isDir ? 'dir' : 'file',
+        size: r.size,
+      })),
+    },
+  }
 }
 
 /** `download`: agent file → workspace path. */
