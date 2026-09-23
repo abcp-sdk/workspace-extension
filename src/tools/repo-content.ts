@@ -174,7 +174,7 @@ export async function repoRead(
     Date.now(),
   )
   await ctx.deps.saveEditState(ctx.tenant, ctx.session, next)
-  return { content, data: { path, sha: got.sha, total_lines: win.total, start: win.start, shown } }
+  return { content, data: { org: r.org, repo: r.repo, ref: r.ref, path, sha: got.sha, total_lines: win.total, start: win.start, shown } }
 }
 
 /** `repo-write`: overwrite one file (one commit); marks the whole file seen. */

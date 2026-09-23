@@ -77,7 +77,7 @@ export async function repoLog(
   const lines = commits.map(c => `${short(c.sha)}  ${c.date}  ${c.author}  ${c.message.split('\n')[0]}`)
   return {
     content: tr(ctx.locale, 'repoLogHeader', { org: r.org, repo: r.repo, ref: r.ref || 'HEAD', count: commits.length }) + '\n' + lines.join('\n'),
-    data: { commits },
+    data: { org: r.org, repo: r.repo, ref: r.ref, ...(path !== '' ? { path } : {}), commits },
   }
 }
 
@@ -94,7 +94,7 @@ export async function repoShow(
   const capped = capLines(patch.split('\n'))
   let body = capped.kept.join('\n')
   if (capped.truncated) body += truncationNote(capped, capped.kept.length, patch.split('\n').length, ctx.locale)
-  return { content: `${header}\n\n${body}`, data: { commit } }
+  return { content: `${header}\n\n${body}`, data: { org: r.org, repo: r.repo, ref: r.ref, sha: commit.sha, commit } }
 }
 
 /** `repo-diff`: compare two refs. */
@@ -119,7 +119,10 @@ export async function repoDiff(
   if (capped.truncated) body += truncationNote(capped, capped.kept.length, lines.length, ctx.locale)
   return {
     content: tr(ctx.locale, 'repoDiffHeader', { org: r.org, repo: r.repo, base, head, count: cmp.files.length }) + '\n' + body,
-    data: { files: cmp.files.map(f => ({ path: f.path, status: f.status, additions: f.additions, deletions: f.deletions })) },
+    data: {
+      org: r.org, repo: r.repo, base, head,
+      files: cmp.files.map(f => ({ path: f.path, status: f.status, additions: f.additions, deletions: f.deletions })),
+    },
   }
 }
 
@@ -134,7 +137,7 @@ export async function repoBranches(
   const lines = branches.map(b => `${b.name}  ${short(b.sha)}`)
   return {
     content: tr(ctx.locale, 'repoBranchesHeader', { org: r.org, repo: r.repo, count: branches.length }) + '\n' + lines.join('\n'),
-    data: { branches },
+    data: { org: r.org, repo: r.repo, branches },
   }
 }
 
@@ -164,7 +167,7 @@ export async function repoBranchCreate(
   }
   return {
     content: tr(ctx.locale, 'repoBranchCreated', { name, org: r.org, repo: r.repo, from }),
-    data: { name, from },
+    data: { org: r.org, repo: r.repo, name, from },
   }
 }
 
@@ -179,7 +182,7 @@ export async function repoTags(
   const lines = tags.map(t => `${t.name}  ${short(t.sha)}`)
   return {
     content: tr(ctx.locale, 'repoTagsHeader', { org: r.org, repo: r.repo, count: tags.length }) + '\n' + lines.join('\n'),
-    data: { tags },
+    data: { org: r.org, repo: r.repo, tags },
   }
 }
 
@@ -194,7 +197,7 @@ export async function repoTagCreate(
   await ctx.forgejo.createTag(r.org, r.repo, name, target, ctx.locale)
   return {
     content: tr(ctx.locale, 'repoTagCreated', { name, org: r.org, repo: r.repo, target }),
-    data: { name, target },
+    data: { org: r.org, repo: r.repo, name, target },
   }
 }
 
@@ -214,7 +217,7 @@ export async function repoMrCreate(
   const res = await ctx.gateway.createMR({ org: r.org, repo: r.repo, title, head, base, body })
   return {
     content: tr(ctx.locale, 'repoMrCreated', { index: res.index, org: r.org, repo: r.repo, url: res.url }),
-    data: { index: res.index, url: res.url },
+    data: { org: r.org, repo: r.repo, index: res.index, url: res.url },
   }
 }
 
@@ -235,7 +238,7 @@ export async function repoMrList(
   })
   return {
     content: tr(ctx.locale, 'repoMrListHeader', { org: r.org, repo: r.repo, count: pulls.length }) + '\n' + lines.join('\n'),
-    data: { pulls },
+    data: { org: r.org, repo: r.repo, pulls },
   }
 }
 
@@ -249,7 +252,7 @@ export async function repoMrComment(
   if (index <= 0) throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'index' }))
   const body = requireArg(args, 'body', ctx.locale)
   await ctx.forgejo.createComment(r.org, r.repo, index, body, ctx.locale)
-  return { content: tr(ctx.locale, 'repoMrCommented', { index, org: r.org, repo: r.repo }), data: { index } }
+  return { content: tr(ctx.locale, 'repoMrCommented', { index, org: r.org, repo: r.repo }), data: { org: r.org, repo: r.repo, index } }
 }
 
 /** `repo-mr-merge`: merge a pull request (maintainer).
@@ -267,5 +270,5 @@ export async function repoMrMerge(
   // A merge moves `main`; refresh the maintainer session's own sandboxes.
   const fanned = ctx.fanout !== undefined ? await ctx.fanout(r.org, r.repo, r.ref, '') : 0
   const note = fanned > 0 ? `\n${tr(ctx.locale, 'fanoutUpdated', { count: fanned })}` : ''
-  return { content: tr(ctx.locale, 'repoMrMerged', { index, org: r.org, repo: r.repo }) + note, data: { index, fanned } }
+  return { content: tr(ctx.locale, 'repoMrMerged', { index, org: r.org, repo: r.repo }) + note, data: { org: r.org, repo: r.repo, index, fanned } }
 }
