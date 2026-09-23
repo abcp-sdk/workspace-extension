@@ -64,7 +64,7 @@ function restoreCtx() {
       async getRaw(_org: string, _repo: string, _path: string, _ref: string) {
         return new Uint8Array([104, 105, 10]) // "hi\n"
       },
-      async commitFiles(_org: string, _repo: string, files: Array<{ path: string; content?: string }>, _msg: string, opts: { ref?: string }) {
+      async applyFiles(_org: string, _repo: string, files: Array<{ path: string; content?: string }>, opts: { ref?: string }) {
         writes.push({ path: files[0]!.path, ref: opts.ref, binary: false, text: files[0]!.content })
         return { sha: 'cafebabe01', message: 'ok' }
       },

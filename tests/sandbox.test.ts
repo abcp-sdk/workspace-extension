@@ -83,6 +83,42 @@ describe('sandbox-create', () => {
     expect((e as TypedToolError).code).toBe('retryable')
     expect(String(e)).toContain('60s')
   })
+
+  it('binds the sandbox to the calling session', async () => {
+    let got: Record<string, unknown> = {}
+    const mgr = fakeManager({
+      createSandbox: async (req: Record<string, unknown>) => {
+        got = req
+        return { sandbox: { name: 'w1', image: 'img', phase: 'Running', ready: true, url: 'http://w1:48080', creator: 't', session: 'o:r:b', createdAt: 1n } }
+      },
+    })
+    await sandboxCreate({ workspace: mgr, locale: 'en', session: 'o:r:b' }, { name: 'w1' })
+    expect(got['session']).toBe('o:r:b')
+  })
+
+  it('runs autoCheckout and appends its note when provided', async () => {
+    const c: SandboxCtx = {
+      workspace: fakeManager(),
+      locale: 'en',
+      session: 'o:r:feat',
+      autoCheckout: async (name: string) => `checked out into ${name}`,
+    }
+    const r = await sandboxCreate(c, { name: 'w1' })
+    expect(r.content).toContain('checked out into w1')
+  })
+
+  it('still succeeds when autoCheckout fails (best-effort)', async () => {
+    const c: SandboxCtx = {
+      workspace: fakeManager(),
+      locale: 'en',
+      session: 'o:r:feat',
+      autoCheckout: async () => {
+        throw new Error('boom')
+      },
+    }
+    const r = await sandboxCreate(c, { name: 'w1' })
+    expect(r.data).toMatchObject({ name: 'w1', ready: true })
+  })
 })
 
 describe('sandbox-list', () => {

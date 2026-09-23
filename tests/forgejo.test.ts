@@ -22,6 +22,9 @@ function fakeGateway(overrides: Partial<Record<string, unknown>> = {}) {
     contents: { isDir: false, text: 'hello\n', sha: 'deadbeef', size: 6n, entries: [] },
     readRaw: { data: new Uint8Array([1, 2, 3]) },
     commitFiles: { sha: 'c0ffee' },
+    applyFiles: { sha: 'c0ffee' },
+    commitStaged: { sha: 'c0ffee' },
+    branchStatus: { placeholder: true, staged: false, tip: 't', mergeTip: 'p' },
     log: { commits: [{ sha: 'c1', message: 'hi', author: 'A', date: '2026-01-01' }] },
     getCommit: { commit: { sha: 'c1', message: 'm', author: 'A', date: 'd', parents: ['p'] } },
     commitDiff: { diff: 'DIFF' },
@@ -79,15 +82,24 @@ describe('Forgejo (gateway-backed)', () => {
     if (got.kind === 'dir') expect(got.entries.map(e => e.type)).toEqual(['file', 'dir'])
   })
 
-  it('sends putFile through commitFiles with base64 content + sha', async () => {
+  it('sends putFile through applyFiles (staging) with content + sha', async () => {
     const { gateway, calls } = fakeGateway()
     const fj = new Forgejo({ gateway })
     const res = await fj.putFile('o', 'r', 'a.txt', 'hi', 'msg', { ref: 'main', sha: 'base' })
     expect(res.sha).toBe('c0ffee')
-    const req = calls[0]!.req as { message: string; ref: string; files: Array<Record<string, unknown>> }
-    expect(req.message).toBe('msg')
-    expect(req.ref).toBe('main')
-    expect(req.files[0]).toMatchObject({ operation: 'update', path: 'a.txt', sha: 'base' })
+    const req = calls[0]!.req as { branch: string; files: Array<Record<string, unknown>> }
+    expect(req.branch).toBe('main')
+    expect(calls[0]!.method).toBe('applyFiles')
+    expect(req.files[0]).toMatchObject({ operation: 'update', path: 'a.txt' })
+  })
+
+  it('finalizes staging through commitStaged(message)', async () => {
+    const { gateway, calls } = fakeGateway()
+    const fj = new Forgejo({ gateway })
+    const res = await fj.commitStaged('o', 'r', 'feat/x', 'my message')
+    expect(res.sha).toBe('c0ffee')
+    expect(calls[0]!.method).toBe('commitStaged')
+    expect(calls[0]!.req).toMatchObject({ org: 'o', repo: 'r', branch: 'feat/x', message: 'my message' })
   })
 
   it('creates without a sha and deletes without content', async () => {

@@ -58,7 +58,7 @@ describe('repo-import', () => {
         ref: '',
         authUser: '',
         authToken: '',
-        private: true,
+        private: false,
         mirror: false,
         description: '',
       },
@@ -66,17 +66,22 @@ describe('repo-import', () => {
     expect(res.data).toMatchObject({ org: 'acme', repo: 'bar', default_branch: 'main' })
   })
 
-  it('forwards an explicit repo, ref and private flag', async () => {
-    const { c, imported } = ctx({ defaultBranch: 'dev' })
+  it('forwards an explicit repo and a source ref (always public)', async () => {
+    const { c, imported } = ctx({ defaultBranch: 'main' })
     const res = await repoImport(c, {
       org: 'acme',
       url: 'https://x/y/z.git',
       repo: 'z',
       ref: 'dev',
-      private: false,
     })
     expect(imported[0]).toMatchObject({ repo: 'z', ref: 'dev', private: false, mirror: false })
-    expect(res.data).toMatchObject({ repo: 'z', default_branch: 'dev' })
+    expect(res.data).toMatchObject({ repo: 'z', default_branch: 'main' })
+  })
+
+  it('ignores a private=true arg (imports are always public)', async () => {
+    const { c, imported } = ctx()
+    await repoImport(c, { org: 'acme', url: 'https://x/y/z.git', private: true })
+    expect(imported[0]).toMatchObject({ private: false })
   })
 
   it('forwards private-source credentials and the description', async () => {

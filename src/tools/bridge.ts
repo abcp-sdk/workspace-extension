@@ -10,6 +10,10 @@ export interface BridgeCtx {
   client: WorkerClient
   forgejo: Forgejo
   locale: string
+  /** The session's own branch (`org:repo:branch`), used as the default target. */
+  branch?: string
+  /** Fan the ported commit out to the session's other sandboxes (optional). */
+  fanout?: (org: string, repo: string, branch: string, newRev: string) => Promise<number>
 }
 
 interface RepoRef {
@@ -81,11 +85,16 @@ export async function sandboxPort(
     throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'path' }))
   }
   const repoPath = strArg(args, 'repo-path') || sandboxPath
-  const message = strArg(args, 'message') || `port ${sandboxPath}`
-  // A commit needs a concrete branch; resolve an empty ref to the default.
+  // A port needs a concrete branch; an empty ref falls back to the session's
+  // own branch, else the repo default.
   const r: RepoRef = {
     ...rawRef,
-    ref: rawRef.ref !== '' ? rawRef.ref : await ctx.forgejo.resolveRef(rawRef.org, rawRef.repo, '', ctx.locale),
+    ref:
+      rawRef.ref !== ''
+        ? rawRef.ref
+        : (ctx.branch ?? '') !== ''
+          ? ctx.branch!
+          : await ctx.forgejo.resolveRef(rawRef.org, rawRef.repo, '', ctx.locale),
   }
 
   // Is the sandbox path a directory?
@@ -131,15 +140,17 @@ export async function sandboxPort(
     operation: stat.isDir ? 'create' : 'update',
     content: f.content,
   }))
-  const res = await ctx.forgejo.commitFiles(r.org, r.repo, commitFiles, message, {
+  const res = await ctx.forgejo.applyFiles(r.org, r.repo, commitFiles, {
     ref: r.ref,
     locale: ctx.locale,
   })
+  const fanned = ctx.fanout !== undefined ? await ctx.fanout(r.org, r.repo, r.ref, res.sha) : 0
+  const note = fanned > 0 ? `\n${tr(ctx.locale, 'fanoutUpdated', { count: fanned })}` : ''
   return {
     content: tr(ctx.locale, 'portDone', {
       count: files.length, org: r.org, repo: r.repo, ref: r.ref || 'HEAD', sha: short(res.sha),
-    }),
-    data: { org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, count: files.length, paths: files.map(f => f.path) },
+    }) + note,
+    data: { org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, count: files.length, paths: files.map(f => f.path), fanned },
   }
 }
 

@@ -25,6 +25,11 @@ export interface RepoCtx {
   tenant: string
   session: string
   locale: string
+  /**
+   * Fan a branch change out to the session's sandboxes. Best-effort; returns
+   * the number of sandboxes updated (0 when the session owns none).
+   */
+  fanout?: (org: string, repo: string, branch: string, newRev: string) => Promise<number>
 }
 
 /** A repo address: `org/repo` at `ref` (ref '' = the default branch). */
@@ -66,8 +71,7 @@ export function repoRef(args: Record<string, unknown>, locale: string): RepoRef 
       repo: requireArg(args, 'repo', locale),
       ref: strArg(args, 'ref'),
     },
-    locale,
-  )
+    locale,  )
 }
 
 /**
@@ -89,6 +93,38 @@ export function repoKey(r: RepoRef, path: string): string {
   return `${r.org}/${r.repo}@${r.ref}:${path}`
 }
 
+/**
+ * Resolve the branch a WRITE targets. An explicit `ref` wins; otherwise the
+ * session's own branch (staging rewrites HEAD, so a write must never land on
+ * the default branch by omission). Throws when the session has no branch and no
+ * ref was given.
+ */
+function writeRepoRef(ctx: RepoCtx, args: Record<string, unknown>): RepoRef {
+  const r = repoRef(args, ctx.locale)
+  if (r.ref !== '') return r
+  const branch = sessionBranch(ctx.session)
+  if (branch !== '') return { ...r, ref: branch }
+  throw new TypedToolError('invalid_argument', tr(ctx.locale, 'writeNeedsBranch'))
+}
+
+/**
+ * Resolve the ref a READ targets: an explicit `ref` wins, else the session's own
+ * branch when it has one, else '' (the repo default). Reads share the write
+ * path's seen-state key, so they must resolve the branch identically.
+ */
+function readRepoRef(ctx: RepoCtx, args: Record<string, unknown>): RepoRef {
+  const r = repoRef(args, ctx.locale)
+  if (r.ref !== '') return r
+  const branch = sessionBranch(ctx.session)
+  return branch === '' ? r : { ...r, ref: branch }
+}
+
+/** The branch part of an `org:repo:branch` session ('' when not a branch session). */
+function sessionBranch(session: string): string {
+  const parts = session.split(':')
+  return parts.length === 3 ? (parts[2] ?? '') : ''
+}
+
 function clampInt(v: number | undefined, def: number, max: number): number {
   if (v === undefined) return def
   const n = Math.floor(v)
@@ -101,7 +137,7 @@ export async function repoRead(
   ctx: RepoCtx,
   args: Record<string, unknown>,
 ): Promise<ToolResultData> {
-  const r = repoRef(args, ctx.locale)
+  const r = readRepoRef(ctx, args)
   const path = requireArg(args, 'path', ctx.locale)
   const offset = clampInt(numArg(args, 'offset'), 0, Number.MAX_SAFE_INTEGER)
   const limit = clampInt(numArg(args, 'limit'), 200, 1000)
@@ -146,7 +182,7 @@ export async function repoWrite(
   ctx: RepoCtx,
   args: Record<string, unknown>,
 ): Promise<ToolResultData> {
-  const r = repoRef(args, ctx.locale)
+  const r = writeRepoRef(ctx, args)
   const path = requireArg(args, 'path', ctx.locale)
   const content = strArg(args, 'content')
   const message = strArg(args, 'message') || `write ${path}`
@@ -178,9 +214,11 @@ export async function repoWrite(
     Date.now(),
   )
   await ctx.deps.saveEditState(ctx.tenant, ctx.session, next)
+  const fanned = ctx.fanout !== undefined ? await ctx.fanout(r.org, r.repo, r.ref, res.sha) : 0
+  const note = fanned > 0 ? `\n${tr(ctx.locale, 'fanoutUpdated', { count: fanned })}` : ''
   return {
-    content: tr(ctx.locale, 'repoWrote', { path, org: r.org, repo: r.repo, ref: r.ref || 'HEAD', sha: short(res.sha) }),
-    data: { path, org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, base_sha: baseSha },
+    content: tr(ctx.locale, 'repoWrote', { path, org: r.org, repo: r.repo, ref: r.ref || 'HEAD', sha: short(res.sha) }) + note,
+    data: { path, org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, base_sha: baseSha, fanned },
   }
 }
 
@@ -189,7 +227,7 @@ export async function repoEdit(
   ctx: RepoCtx,
   args: Record<string, unknown>,
 ): Promise<ToolResultData> {
-  const r = repoRef(args, ctx.locale)
+  const r = writeRepoRef(ctx, args)
   const path = requireArg(args, 'path', ctx.locale)
   const startLine = Math.trunc(numArg(args, 'start-line') ?? 0)
   const endLine = Math.trunc(numArg(args, 'end-line') ?? 0)
@@ -252,9 +290,11 @@ export async function repoEdit(
   const capped = capLines(diff.text.split('\n'))
   let body = capped.kept.join('\n')
   if (capped.truncated) body += truncationNote(capped, capped.kept.length, diff.text.split('\n').length, ctx.locale)
+  const fanned = ctx.fanout !== undefined ? await ctx.fanout(r.org, r.repo, r.ref, res.sha) : 0
+  const note = fanned > 0 ? `\n${tr(ctx.locale, 'fanoutUpdated', { count: fanned })}` : ''
   return {
-    content: `${summary}\n\n${body}`,
-    data: { path, org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, added: diff.added, removed: diff.removed },
+    content: `${summary}\n\n${body}${note}`,
+    data: { path, org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, added: diff.added, removed: diff.removed, fanned },
   }
 }
 
@@ -263,7 +303,7 @@ export async function repoDelete(
   ctx: RepoCtx,
   args: Record<string, unknown>,
 ): Promise<ToolResultData> {
-  const r = repoRef(args, ctx.locale)
+  const r = writeRepoRef(ctx, args)
   const path = requireArg(args, 'path', ctx.locale)
   const message = strArg(args, 'message') || `delete ${path}`
   let baseSha = ''
@@ -280,9 +320,11 @@ export async function repoDelete(
   })
   const state = await ctx.deps.loadEditState(ctx.tenant, ctx.session)
   await ctx.deps.saveEditState(ctx.tenant, ctx.session, invalidate(state, repoKey(r, path)))
+  const fanned = ctx.fanout !== undefined ? await ctx.fanout(r.org, r.repo, r.ref, res.sha) : 0
+  const note = fanned > 0 ? `\n${tr(ctx.locale, 'fanoutUpdated', { count: fanned })}` : ''
   return {
-    content: tr(ctx.locale, 'repoDeleted', { path, org: r.org, repo: r.repo, ref: r.ref || 'HEAD', sha: short(res.sha) }),
-    data: { path, org: r.org, repo: r.repo, ref: r.ref, commit: res.sha },
+    content: tr(ctx.locale, 'repoDeleted', { path, org: r.org, repo: r.repo, ref: r.ref || 'HEAD', sha: short(res.sha) }) + note,
+    data: { path, org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, fanned },
   }
 }
 
@@ -291,7 +333,7 @@ export async function repoList(
   ctx: RepoCtx,
   args: Record<string, unknown>,
 ): Promise<ToolResultData> {
-  const r = repoRef(args, ctx.locale)
+  const r = readRepoRef(ctx, args)
   const path = strArg(args, 'path')
   const got = await ctx.forgejo.getContents(r.org, r.repo, path, r.ref, ctx.locale)
   const entries = got.kind === 'dir' ? got.entries : [{ path, name: path, type: 'file' as const, size: got.size, sha: got.sha }]
@@ -305,47 +347,34 @@ export async function repoList(
   return { content, data: { org: r.org, repo: r.repo, ref: r.ref, entries: entries.map(e => ({ path: e.path, type: e.type, size: e.size })) } }
 }
 
-/** `repo-commit`: atomic multi-file commit. */
+/**
+ * `repo-commit`: finalize the branch's staged changes under `message` and open a
+ * fresh staging commit. There is no file list: writes/edits/deletes accumulate
+ * in the staging commit and this tool names it.
+ */
 export async function repoCommit(
   ctx: RepoCtx,
   args: Record<string, unknown>,
 ): Promise<ToolResultData> {
-  const r = repoRef(args, ctx.locale)
+  const r = writeRepoRef(ctx, args)
   const message = requireArg(args, 'message', ctx.locale)
-  const rawFiles = args['files']
-  if (!Array.isArray(rawFiles) || rawFiles.length === 0) {
-    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'files' }))
+  if (message.trim() === '') {
+    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'message' }))
   }
-  const files = rawFiles.map((f, i) => {
-    const o = f as Record<string, unknown>
-    const p = strArg(o, 'path')
-    if (p === '') throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: `files[${i}].path` }))
-    const opRaw = strArg(o, 'operation') || 'update'
-    if (opRaw !== 'create' && opRaw !== 'update' && opRaw !== 'delete') {
-      throw new TypedToolError('invalid_argument', `files[${i}].operation must be create|update|delete`)
-    }
-    const out: { path: string; operation: 'create' | 'update' | 'delete'; content?: string; sha?: string } = {
-      path: p,
-      operation: opRaw,
-    }
-    if (opRaw !== 'delete') out.content = strArg(o, 'content')
-    const sha = strArg(o, 'sha')
-    if (sha !== '') out.sha = sha
-    return out
-  })
-  const newBranch = strArg(args, 'new-branch')
-  const res = await ctx.forgejo.commitFiles(r.org, r.repo, files, message, {
-    ref: r.ref,
-    ...(newBranch !== '' ? { newBranch } : {}),
-    locale: ctx.locale,
-  })
-  // Invalidate every committed path's seen state.
+  const res = await ctx.forgejo.commitStaged(r.org, r.repo, r.ref, message, ctx.locale)
+  // The commit rewinds/advances HEAD; invalidate all seen state for this branch.
   let state = await ctx.deps.loadEditState(ctx.tenant, ctx.session)
-  for (const f of files) state = invalidate(state, repoKey(r, f.path))
+  for (const key of Object.keys(state)) {
+    if (key.startsWith(`${r.org}/${r.repo}@`) || key.startsWith(`${r.org}/${r.repo}@${r.ref}:`)) {
+      state = invalidate(state, key)
+    }
+  }
   await ctx.deps.saveEditState(ctx.tenant, ctx.session, state)
+  const fanned = ctx.fanout !== undefined ? await ctx.fanout(r.org, r.repo, r.ref, res.sha) : 0
+  const note = fanned > 0 ? `\n${tr(ctx.locale, 'fanoutUpdated', { count: fanned })}` : ''
   return {
-    content: tr(ctx.locale, 'repoCommitted', { count: files.length, org: r.org, repo: r.repo, ref: r.ref || 'HEAD', sha: short(res.sha) }),
-    data: { org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, count: files.length },
+    content: tr(ctx.locale, 'repoCommitted', { org: r.org, repo: r.repo, ref: r.ref || 'HEAD', sha: short(res.sha) }) + note,
+    data: { org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, fanned },
   }
 }
 

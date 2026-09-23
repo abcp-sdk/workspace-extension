@@ -29,7 +29,7 @@ function fakeRepo() {
             if (f === undefined) throw { code: 'not_found', message: 'not found' }
             return { isDir: false, text: f.text, sha: f.sha, size: BigInt(f.text.length) }
           }
-          if (prop === 'commitFiles') {
+          if (prop === 'commitFiles' || prop === 'applyFiles') {
             for (const f of (req['files'] as Array<Record<string, unknown>>) ?? []) {
               const p = f['path'] as string
               if (f['operation'] === 'delete') { files.delete(p); continue }
@@ -55,7 +55,7 @@ function ctx(forgejo: Forgejo): RepoCtx {
       state = next
     },
   } as unknown as WorkspaceDeps
-  return { forgejo, deps, tenant: 't', session: 's', locale: 'en' }
+  return { forgejo, deps, tenant: 't', session: 'o:r:feat', locale: 'en' }
 }
 
 describe('repo read-before-edit guard', () => {

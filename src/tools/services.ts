@@ -29,6 +29,7 @@ export async function serviceDeploy(
   }
   const command = args['command']
   const commandList = Array.isArray(command) ? command.filter((c): c is string => typeof c === 'string') : []
+  const services = parseServices(args['services'])
   try {
     const res = await ctx.workspace.deployService(
       {
@@ -43,6 +44,7 @@ export async function serviceDeploy(
         command: commandList,
         kvm: args['kvm'] === true,
         gpuCount: Math.trunc(numArg(args, 'gpu-count') ?? 0),
+        services,
       },
       { headers: { 'X-Session-Name': ctx.session } },
     )
@@ -50,13 +52,41 @@ export async function serviceDeploy(
     if (s === undefined) {
       throw new TypedToolError('internal', tr(ctx.locale, 'serviceDeployFailed', { err: 'no service in response' }))
     }
+    // One line per public port.
+    const publics = (s.ports ?? [])
+      .filter(p => p.publicUrl)
+      .map(p => p.publicUrl)
+    const note = publics.length
+      ? '\n' + publics.map(u => tr(ctx.locale, 'servicePublicUrl', { url: u })).join('\n')
+      : ''
     return {
-      content: tr(ctx.locale, 'serviceDeployed', { name: s.name, image: s.image, url: s.url }),
-      data: { name: s.name, image: s.image, url: s.url, phase: s.phase, ready: s.ready, replicas: s.replicas },
+      content: tr(ctx.locale, 'serviceDeployed', { name: s.name, image: s.image, url: s.url }) + note,
+      data: {
+        name: s.name, image: s.image, url: s.url,
+        public_url: publics[0] ?? '', public_urls: publics,
+        ports: (s.ports ?? []).map(p => ({ name: p.name, preset: p.preset, port: p.port, protocol: p.protocol, target_port: p.targetPort, public_url: p.publicUrl })),
+        phase: s.phase, ready: s.ready, replicas: s.replicas,
+      },
     }
   } catch (e) {
     throw new TypedToolError('internal', tr(ctx.locale, 'serviceDeployFailed', { err: String(e) }))
   }
+}
+
+/** Parse the `services` port array into the gateway shape. */
+function parseServices(raw: unknown): Array<{ name: string; preset: string; targetPort: number }> {
+  if (!Array.isArray(raw)) return []
+  const out: Array<{ name: string; preset: string; targetPort: number }> = []
+  for (const item of raw) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) continue
+    const o = item as Record<string, unknown>
+    out.push({
+      name: typeof o['name'] === 'string' ? o['name'] : '',
+      preset: typeof o['preset'] === 'string' ? o['preset'] : 'tcp80',
+      targetPort: Math.trunc(Number(o['target-port'] ?? o['targetPort'] ?? 0)) || 0,
+    })
+  }
+  return out
 }
 
 /** `service-list`: list the tenant's services. */
@@ -67,10 +97,94 @@ export async function serviceList(
   const res = await ctx.workspace.listServices({})
   const svcs = res.services
   if (svcs.length === 0) return { content: tr(ctx.locale, 'serviceNone') }
-  const lines = svcs.map(
-    s => `${s.name}  [${s.phase}${s.ready ? ', ready' : ''}]  ${s.image}  ${s.url}  x${s.replicas}`,
-  )
+  const lines = svcs.map(s => {
+    const publics = (s.ports ?? []).filter(p => p.publicUrl).map(p => p.publicUrl)
+    const ports = (s.ports ?? [])
+      .map(p => `${p.protocol}:${p.port}${p.name ? `(${p.name})` : ''}->${p.targetPort}`)
+      .join(',')
+    return (
+      `${s.name}  [${s.phase}${s.ready ? ', ready' : ''}]  ${s.image}  ${s.url}  x${s.replicas}` +
+      (ports ? `  ports=${ports}` : '') +
+      (publics.length ? `  public=${publics.join(',')}` : '') +
+      `  session=${s.session || '-'}`
+    )
+  })
   return { content: tr(ctx.locale, 'serviceListHeader', { count: svcs.length }) + '\n' + lines.join('\n'), data: { count: svcs.length } }
+}
+
+/** `service-preview`: deploy a session-bound, cluster-only preview service. */
+export async function servicePreview(
+  ctx: ServiceCtx,
+  args: Record<string, unknown>,
+): Promise<ToolResultData> {
+  const image = strArg(args, 'image')
+  if (image === '') {
+    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'image' }))
+  }
+  const env = args['env']
+  const envMap: Record<string, string> = {}
+  if (env !== null && typeof env === 'object' && !Array.isArray(env)) {
+    for (const [k, v] of Object.entries(env as Record<string, unknown>)) {
+      if (typeof v === 'string') envMap[k] = v
+    }
+  }
+  const command = args['command']
+  const commandList = Array.isArray(command) ? command.filter((c): c is string => typeof c === 'string') : []
+  const services = parseServices(args['services'])
+  try {
+    const res = await ctx.workspace.previewService(
+      {
+        name: strArg(args, 'name'),
+        image,
+        containerPort: Math.trunc(numArg(args, 'container-port') ?? 0),
+        env: envMap,
+        cpu: strArg(args, 'cpu'),
+        memory: strArg(args, 'memory'),
+        command: commandList,
+        kvm: args['kvm'] === true,
+        gpuCount: Math.trunc(numArg(args, 'gpu-count') ?? 0),
+        services,
+        ttlSeconds: Math.trunc(numArg(args, 'ttl-seconds') ?? 0),
+      },
+      { headers: { 'X-Session-Name': ctx.session } },
+    )
+    const s = res.service
+    if (s === undefined) {
+      throw new TypedToolError('internal', tr(ctx.locale, 'serviceDeployFailed', { err: 'no service in response' }))
+    }
+    return {
+      content: tr(ctx.locale, 'servicePreviewed', { name: s.name, image: s.image, url: s.url }),
+      data: {
+        name: s.name, image: s.image, url: s.url, stage: s.stage,
+        phase: s.phase, ready: s.ready, expires_at: Number(s.expiresAt),
+        ports: (s.ports ?? []).map(p => ({ name: p.name, preset: p.preset, port: p.port, protocol: p.protocol, target_port: p.targetPort })),
+      },
+    }
+  } catch (e) {
+    throw new TypedToolError('internal', tr(ctx.locale, 'serviceDeployFailed', { err: String(e) }))
+  }
+}
+
+/** `service-logs`: read a service's container log (tail, optionally previous). */
+export async function serviceLogs(
+  ctx: ServiceCtx,
+  args: Record<string, unknown>,
+): Promise<ToolResultData> {
+  const name = strArg(args, 'name')
+  if (name === '') throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'name' }))
+  const tail = Math.trunc(numArg(args, 'tail-lines') ?? 0)
+  const previous = args['previous'] === true
+  try {
+    const res = await ctx.workspace.serviceLogs({ name, tailLines: BigInt(tail), previous })
+    const lines = res.lines
+    if (lines.length === 0) return { content: tr(ctx.locale, 'serviceLogsEmpty', { name }), data: { name, lines: 0 } }
+    return {
+      content: tr(ctx.locale, 'serviceLogsHeader', { name, count: lines.length }) + '\n' + lines.join('\n'),
+      data: { name, lines: lines.length },
+    }
+  } catch (e) {
+    throw new TypedToolError('internal', tr(ctx.locale, 'serviceLogsFailed', { name, err: String(e) }))
+  }
 }
 
 /** `service-delete`: delete a service. */

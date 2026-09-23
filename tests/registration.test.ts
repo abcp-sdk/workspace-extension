@@ -50,6 +50,7 @@ const EXPECTED_TOOLS = [
   'sandbox-create',
   'sandbox-delete',
   'list-oci-images',
+  'oci-import',
   'sandbox-list',
   'sandbox-status',
   // sandbox execution (easyworker)
@@ -74,18 +75,23 @@ const EXPECTED_TOOLS = [
   'repo-branch-sync',
   'repo-branches',
   'repo-build-image',
+  'repo-build-preview',
   'service-delete',
   'service-deploy',
   'service-list',
+  'service-logs',
+  'service-preview',
   'repo-commit',
   'repo-create-org',
   'repo-create-repo',
   'repo-delete',
   'repo-diff',
   'repo-edit',
+  'repo-delete-push-mirror',
   'repo-explore',
   'repo-import',
   'repo-list',
+  'repo-list-push-mirrors',
   'repo-log',
   'repo-mail-send',
   'repo-mr-comment',
@@ -93,7 +99,9 @@ const EXPECTED_TOOLS = [
   'repo-mr-list',
   'repo-mr-merge',
   'repo-read',
+  'repo-remove',
   'repo-restore',
+  'repo-set-push-mirror',
   'repo-show',
   'repo-tag-create',
   'repo-tags',
@@ -160,6 +168,15 @@ describe('workspace extension registration', () => {
     }
     const config = (manifest?.config ?? []).map(c => c.name).sort()
     expect(config).toEqual([CONFIG.gatewayUrl, CONFIG.gatewayToken].sort())
+
+    // Prompt variables: org/repo/branch, all session-scoped (the branch-role
+    // system prompts reference them).
+    const vars = (manifest?.prompt?.variables ?? []).map(v => [v.name, v.scope]).sort()
+    expect(vars).toEqual([
+      ['branch', 'session'],
+      ['org', 'session'],
+      ['repo', 'session'],
+    ])
 
     // Execution tools carry a required worker-name; lifecycle tools do not.
     const byName = new Map((manifest?.tools ?? []).map(t => [t.name, t]))

@@ -161,6 +161,10 @@ export const CATALOG = {
     en: "Deployed service '{name}' ({image}) at {url}.",
     zh: "已部署服务 '{name}'（{image}），地址 {url}。",
   },
+  servicePublicUrl: {
+    en: "Public URL (anonymous): {url}",
+    zh: "公开地址（匿名可访问）：{url}",
+  },
   serviceDeployFailed: {
     en: 'service-deploy failed: {err}',
     zh: 'service-deploy 失败：{err}',
@@ -181,6 +185,26 @@ export const CATALOG = {
     en: "service '{name}' not found.",
     zh: "未找到服务 '{name}'。",
   },
+  servicePreviewed: {
+    en: "Preview service '{name}' ({image}) is up in-cluster at {url} (no public URL; reclaimed on session end / TTL).",
+    zh: "预览服务 '{name}'（{image}）已在集群内就绪：{url}（无公开地址；会话结束 / TTL 后回收）。",
+  },
+  serviceLogsHeader: {
+    en: "Logs for '{name}' (last {count} lines):",
+    zh: "'{name}' 的日志（最后 {count} 行）：",
+  },
+  serviceLogsEmpty: {
+    en: "No log output for '{name}'.",
+    zh: "'{name}' 暂无日志输出。",
+  },
+  serviceLogsFailed: {
+    en: "service-logs failed for '{name}': {err}",
+    zh: "读取 '{name}' 日志失败：{err}",
+  },
+  previewImageBuilt: {
+    en: "Built and pushed PREVIEW image '{image}'.",
+    zh: "已构建并推送预览镜像 '{image}'。",
+  },
   ociImageNone: {
     en: 'No OCI images found.',
     zh: '未找到 OCI 镜像。',
@@ -196,6 +220,14 @@ export const CATALOG = {
   imageBuildFailed: {
     en: "Failed to build image '{image}': {err}",
     zh: "构建镜像 '{image}' 失败：{err}",
+  },
+  imageImported: {
+    en: "Imported image '{source}' as '{image}'.",
+    zh: "已将镜像 '{source}' 导入为 '{image}'。",
+  },
+  imageImportFailed: {
+    en: "Failed to import image '{image}': {err}",
+    zh: "导入镜像 '{image}' 失败：{err}",
   },
   sandboxStatus: {
     en: "sandbox '{name}': {phase}{ready} (image {image}, url {url})",
@@ -250,6 +282,26 @@ export const CATALOG = {
   repoImported: {
     en: "imported {full} (default branch: {branch})",
     zh: "已导入 {full}（默认分支：{branch}）。",
+  },
+  repoRemoved: {
+    en: "removed {full} (repository + its branch sessions + sandboxes)",
+    zh: "已删除 {full}（仓库及其分支会话与沙箱）。",
+  },
+  pushMirrorSet: {
+    en: "push mirror set on {full}: {name} → {url}",
+    zh: "已为 {full} 设置 push mirror：{name} → {url}。",
+  },
+  pushMirrorList: {
+    en: "push mirrors on {full} ({count}):",
+    zh: "{full} 上的 push mirror（{count} 个）：",
+  },
+  pushMirrorNone: {
+    en: "(none)",
+    zh: "（无）",
+  },
+  pushMirrorDeleted: {
+    en: "push mirror '{name}' removed from {full}",
+    zh: "已从 {full} 移除 push mirror '{name}'。",
   },
   mailDelivered: {
     en: "message delivered to branch session '{session}'",
@@ -311,25 +363,29 @@ export const CATALOG = {
     en: 'repository {org}/{repo}@{ref}',
     zh: '仓库 {org}/{repo}@{ref}',
   },
+  writeNeedsBranch: {
+    en: 'writing requires a branch: pass `ref`, or use a branch session (org:repo:branch)',
+    zh: '写入需要分支：请传 `ref`，或使用分支会话（org:repo:branch）',
+  },
   repoWrote: {
-    en: "Wrote '{path}' in {org}/{repo}@{ref} (commit {sha}).",
-    zh: "已写入 {org}/{repo}@{ref} 中的 '{path}'（提交 {sha}）。",
+    en: "Staged '{path}' in {org}/{repo}@{ref} (not yet committed).",
+    zh: "已在 {org}/{repo}@{ref} 暂存 '{path}'（尚未提交）。",
   },
   repoDeleted: {
-    en: "Deleted '{path}' in {org}/{repo}@{ref} (commit {sha}).",
-    zh: "已删除 {org}/{repo}@{ref} 中的 '{path}'（提交 {sha}）。",
+    en: "Staged deletion of '{path}' in {org}/{repo}@{ref} (not yet committed).",
+    zh: "已暂存删除 {org}/{repo}@{ref} 中的 '{path}'（尚未提交）。",
   },
   repoCommitted: {
-    en: 'Committed {count} file(s) to {org}/{repo}@{ref} (commit {sha}).',
-    zh: '已向 {org}/{repo}@{ref} 提交 {count} 个文件（提交 {sha}）。',
+    en: 'Finalized staged changes on {org}/{repo}@{ref} (commit {sha}); a fresh staging area is open.',
+    zh: '已完成 {org}/{repo}@{ref} 上暂存改动的提交（提交 {sha}）；已开启新的暂存区。',
   },
   repoNoChanges: {
     en: "No changes to '{path}' in {org}/{repo}@{ref}.",
     zh: "{org}/{repo}@{ref} 中的 '{path}' 没有变化。",
   },
   repoEditSummary: {
-    en: "Edited '{path}' in {org}/{repo}@{ref}: +{added} -{removed} (commit {sha}).",
-    zh: "已编辑 {org}/{repo}@{ref} 中的 '{path}'：+{added} -{removed}（提交 {sha}）。",
+    en: "Staged edit of '{path}' in {org}/{repo}@{ref}: +{added} -{removed} (not yet committed).",
+    zh: "已暂存对 {org}/{repo}@{ref} 中 '{path}' 的编辑：+{added} -{removed}（尚未提交）。",
   },
   repoTreeHeader: {
     en: '{org}/{repo}@{ref} ({count} entries):',
@@ -440,6 +496,10 @@ export const CATALOG = {
   portNoFiles: {
     en: 'no files to port from {path}',
     zh: '{path} 中没有可移植的文件',
+  },
+  fanoutUpdated: {
+    en: 'Synced the change into {count} sandbox(es) owned by this session.',
+    zh: '已把该改动同步到本会话拥有的 {count} 个沙箱。',
   },
 } satisfies Catalog<string>
 

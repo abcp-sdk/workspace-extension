@@ -51,6 +51,10 @@ export interface WorkspaceDeps {
   ) => Promise<void>
   /** Delete the session's read-before-edit state (session deletion). */
   clearEditState: (tenant: string, sessionName: string) => Promise<void>
+  /** Load a sandbox's last-synced-rev baseline (null when never stored). */
+  loadSyncState?: (tenant: string, sandbox: string) => Promise<SandboxSyncState | null>
+  /** Persist a sandbox's last-synced-rev baseline. */
+  saveSyncState?: (tenant: string, sandbox: string, state: SandboxSyncState) => Promise<void>
   /** Publish a message into a session's durable NATS mailbox (wakes its turn).
    *  `source` is the message ORIGIN (`user` / `session:{name}` / `system:{name}`),
    *  carried to the agent so a consumer can tell a hand-off from a human prompt. */
@@ -78,6 +82,23 @@ function requireTenant(tenant: string | undefined, op: string): string {
  * the bucket on first use.
  */
 export const EDIT_STATE_BUCKET = 'workspace-edit-state'
+
+/**
+ * KV bucket for per-sandbox sync baselines. One key per (tenant, sandbox)
+ * holding the last rev (commit sha) whose tree was written into that sandbox,
+ * so a later repo change can fan out only the paths that moved.
+ */
+export const SYNC_STATE_BUCKET = 'workspace-sandbox-sync'
+
+/** A sandbox's last-synced baseline. */
+export interface SandboxSyncState {
+  /** The branch tip sha whose tree the sandbox currently holds. */
+  rev: string
+  /** The session the sandbox is bound to (`org:repo:branch`). */
+  session: string
+  /** Epoch millis of the last sync (diagnostics). */
+  updatedAt: number
+}
 
 /** Default deps backed by the agent file RPCs (`abc.<tenant>.file.*`). */
 export function agentFileDeps(bus: Bus): WorkspaceDeps {
@@ -147,6 +168,31 @@ export function agentFileDeps(bus: Bus): WorkspaceDeps {
       await bus
         .kvDelete(EDIT_STATE_BUCKET, tenantKVKey(tenant, sessionToken(sessionName)))
         .catch(() => {})
+    },
+    loadSyncState: async (tenant, sandbox) => {
+      if (sandbox === '') return null
+      try {
+        const raw = await bus.kvGet(
+          SYNC_STATE_BUCKET,
+          tenantKVKey(tenant, sessionToken(sandbox)),
+        )
+        if (raw === null || raw === '') return null
+        const parsed: unknown = JSON.parse(raw)
+        return parsed !== null && typeof parsed === 'object'
+          ? (parsed as SandboxSyncState)
+          : null
+      } catch {
+        return null
+      }
+    },
+    saveSyncState: async (tenant, sandbox, state) => {
+      if (sandbox === '') return
+      await bus.kvPut(
+        SYNC_STATE_BUCKET,
+        tenantKVKey(tenant, sessionToken(sandbox)),
+        JSON.stringify(state),
+        0,
+      )
     },
   }
 }

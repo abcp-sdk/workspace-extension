@@ -9,8 +9,16 @@ import { domainOf, numArg, strArg } from './shared.js'
 export interface SandboxCtx {
   workspace: GatewayClient
   locale: string
+  /** The calling session (bound to the created sandbox). */
+  session?: string
   /** Resolve a sandbox name to a live worker client + its endpoint url. */
   resolveWorker?: (name: string) => Promise<{ client: WorkerClient; url: string }>
+  /**
+   * After a successful create, materialize the session's branch into the new
+   * sandbox. Returns a human note appended to the result ('' when nothing was
+   * checked out — a free session, an empty repo, or a failure).
+   */
+  autoCheckout?: (sandbox: string) => Promise<string>
 }
 
 function short(ms: bigint): string {
@@ -91,6 +99,7 @@ export async function sandboxCreate(
       env: envMap,
       kvm: args['kvm'] === true,
       gpuCount: Math.trunc(numArg(args, 'gpu-count') ?? 0),
+      session: ctx.session ?? '',
     })
     const w = res.sandbox
     if (w === undefined) {
@@ -109,6 +118,15 @@ export async function sandboxCreate(
         const rendered = renderInfo(ctx.locale, info, domainOf(url))
         content += '\n' + rendered.text
         Object.assign(data, rendered.data)
+      } catch {
+        // ignore: creation succeeded
+      }
+    }
+    // Materialize the session's branch into the fresh sandbox. Best-effort.
+    if (ctx.autoCheckout !== undefined) {
+      try {
+        const note = await ctx.autoCheckout(w.name)
+        if (note !== '') content += '\n' + note
       } catch {
         // ignore: creation succeeded
       }

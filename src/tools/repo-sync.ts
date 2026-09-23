@@ -20,10 +20,12 @@ export async function repoBranchSync(
 ): Promise<ToolResultData> {
   const r = syncRef(ctx, args)
   const res = await ctx.gateway.syncBranch({ org: r.org, repo: r.repo, branch: r.branch })
+  const fanned = res.clean && ctx.fanout !== undefined ? await ctx.fanout(r.org, r.repo, r.branch, res.commit) : 0
+  const note = fanned > 0 ? `\n${tr(ctx.locale, 'fanoutUpdated', { count: fanned })}` : ''
   if (res.clean) {
     return {
-      content: tr(ctx.locale, 'syncClean', { org: r.org, repo: r.repo, branch: r.branch, commit: res.commit.slice(0, 8) }),
-      data: { org: r.org, repo: r.repo, branch: r.branch, clean: true, commit: res.commit },
+      content: tr(ctx.locale, 'syncClean', { org: r.org, repo: r.repo, branch: r.branch, commit: res.commit.slice(0, 8) }) + note,
+      data: { org: r.org, repo: r.repo, branch: r.branch, clean: true, commit: res.commit, fanned },
     }
   }
   return {
@@ -60,23 +62,28 @@ export async function repoRestore(
   // Read the SOURCE bytes at `from` (binary-safe).
   const bytes = await ctx.forgejo.getRaw(org, repo, path, from, ctx.locale)
 
-  // Write them back to the target branch (default ref).
+  // Stage the restored content onto the target branch (staging commit). The
+  // target defaults to the session's own branch.
+  const sessionBranch = ctx.session.split(':').length === 3 ? (ctx.session.split(':')[2] ?? '') : ''
+  const target = ref !== '' ? ref : sessionBranch
+  if (target === '') {
+    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'writeNeedsBranch'))
+  }
   const isText = isUtf8(bytes)
-  const res = await ctx.forgejo.commitFiles(
+  const res = await ctx.forgejo.applyFiles(
     org,
     repo,
     isText
       ? [{ path, operation: 'update', content: new TextDecoder().decode(bytes) }]
       : [{ path, operation: 'update', contentBytes: bytes }],
-    `restore ${path} from ${from}`,
-    { ...(ref !== '' ? { ref } : {}), locale: ctx.locale },
+    { ref: target, locale: ctx.locale },
   )
   return {
     content: tr(ctx.locale, 'restored', {
-      path, from, org, repo, ref: ref || 'HEAD', sha: res.sha.slice(0, 8),
+      path, from, org, repo, ref: target, sha: res.sha.slice(0, 8),
       binary: isText ? '' : ' [binary]',
     }),
-    data: { org, repo, path, from, ref, commit: res.sha, binary: !isText },
+    data: { org, repo, path, from, ref: target, commit: res.sha, binary: !isText },
   }
 }
 

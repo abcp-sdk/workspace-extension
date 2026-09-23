@@ -233,14 +233,13 @@ export class Forgejo {
     repo: string,
     path: string,
     content: string,
-    message: string,
+    _message: string,
     opts: { ref?: string; sha?: string; newBranch?: string; locale?: string } = {},
   ): Promise<CommitResult> {
-    return this.commitFiles(
+    return this.applyFiles(
       org,
       repo,
-      [{ path, operation: opts.sha !== undefined && opts.sha !== '' ? 'update' : 'create', content, ...(opts.sha !== undefined && opts.sha !== '' ? { sha: opts.sha } : {}) }],
-      message,
+      [{ path, operation: opts.sha !== undefined && opts.sha !== '' ? 'update' : 'create', content }],
       opts,
     )
   }
@@ -249,16 +248,71 @@ export class Forgejo {
     org: string,
     repo: string,
     path: string,
-    message: string,
+    _message: string,
     opts: { ref?: string; sha?: string; locale?: string } = {},
   ): Promise<CommitResult> {
-    return this.commitFiles(
+    return this.applyFiles(
       org,
       repo,
       [{ path, operation: 'delete', ...(opts.sha !== undefined && opts.sha !== '' ? { sha: opts.sha } : {}) }],
-      message,
       opts,
     )
+  }
+
+  /**
+   * Apply file changes to a branch's STAGING commit (amend semantics): the
+   * gateway rewinds HEAD's placeholder, so a sequence of writes/edits/deletes
+   * accumulates in one commit until `commitStaged` finalizes it.
+   */
+  async applyFiles(
+    org: string,
+    repo: string,
+    files: CommitFile[],
+    opts: { ref?: string; locale?: string } = {},
+  ): Promise<CommitResult> {
+    try {
+      const r = await this.gateway.applyFiles({
+        org,
+        repo,
+        branch: opts.ref ?? '',
+        files: files.map(f => ({
+          path: f.path,
+          operation: f.operation ?? 'update',
+          content: f.content ?? '',
+          contentBytes: f.contentBytes ?? new Uint8Array(),
+          sha: f.sha ?? '',
+          fromPath: f.fromPath ?? '',
+        })),
+      })
+      return { sha: r.sha, message: '' }
+    } catch (e) {
+      throw gatewayError(e, opts.locale ?? 'en')
+    }
+  }
+
+  /** Report a branch's staging state (placeholder present / staged / merge tip). */
+  async branchStatus(
+    org: string,
+    repo: string,
+    branch: string,
+    locale = 'en',
+  ): Promise<{ placeholder: boolean; staged: boolean; tip: string; mergeTip: string }> {
+    try {
+      const r = await this.gateway.branchStatus({ org, repo, branch })
+      return { placeholder: r.placeholder, staged: r.staged, tip: r.tip, mergeTip: r.mergeTip }
+    } catch (e) {
+      throw gatewayError(e, locale)
+    }
+  }
+
+  /** Finalize the branch's staging commit under `message` and open a fresh one. */
+  async commitStaged(org: string, repo: string, branch: string, message: string, locale = 'en'): Promise<CommitResult> {
+    try {
+      const r = await this.gateway.commitStaged({ org, repo, branch, message })
+      return { sha: r.sha, message }
+    } catch (e) {
+      throw gatewayError(e, locale)
+    }
   }
 
   async commitFiles(

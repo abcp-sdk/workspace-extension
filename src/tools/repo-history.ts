@@ -264,5 +264,8 @@ export async function repoMrMerge(
   const index = Math.trunc(numArg(args, 'index') ?? 0)
   if (index <= 0) throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'index' }))
   await ctx.gateway.mergeMR({ org: r.org, repo: r.repo, index })
-  return { content: tr(ctx.locale, 'repoMrMerged', { index, org: r.org, repo: r.repo }), data: { index } }
+  // A merge moves `main`; refresh the maintainer session's own sandboxes.
+  const fanned = ctx.fanout !== undefined ? await ctx.fanout(r.org, r.repo, r.ref, '') : 0
+  const note = fanned > 0 ? `\n${tr(ctx.locale, 'fanoutUpdated', { count: fanned })}` : ''
+  return { content: tr(ctx.locale, 'repoMrMerged', { index, org: r.org, repo: r.repo }) + note, data: { index, fanned } }
 }

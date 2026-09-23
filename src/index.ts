@@ -69,10 +69,25 @@ import {
   repoTagCreate,
   repoTags,
 } from './tools/repo-history.js'
-import { repoCreateOrg, repoCreateRepo, repoImport } from './tools/repo-admin.js'
+import {
+  repoCreateOrg,
+  repoCreateRepo,
+  repoDeletePushMirror,
+  repoImport,
+  repoListPushMirrors,
+  repoRemove,
+  repoSetPushMirror,
+} from './tools/repo-admin.js'
 import { repoBranchSync, repoRestore } from './tools/repo-sync.js'
 import { repoMailSend, type MailCtx } from './tools/mail.js'
 import { sandboxCheckout, sandboxPort, type BridgeCtx } from './tools/bridge.js'
+import {
+  branchRefOf,
+  checkoutIntoSandbox,
+  fanoutNote,
+  fanoutRef,
+  recordBaseline,
+} from './tools/fanout.js'
 import {
   renderInfo,
   sandboxCreate,
@@ -82,8 +97,15 @@ import {
   sandboxStatus,
   type SandboxCtx,
 } from './tools/sandbox.js'
-import { repoBuildImage, type BuildCtx } from './tools/imagebuild.js'
-import { serviceDelete, serviceDeploy, serviceList, type ServiceCtx } from './tools/services.js'
+import { ociImport, repoBuildImage, repoBuildPreview, type BuildCtx } from './tools/imagebuild.js'
+import {
+  serviceDelete,
+  serviceDeploy,
+  serviceList,
+  serviceLogs,
+  servicePreview,
+  type ServiceCtx,
+} from './tools/services.js'
 
 export const EXT_ID = 'workspace'
 export const EXT_VERSION = '0.14.1'
@@ -231,7 +253,14 @@ export function createWorkspaceConfig(
       const t = tenant ?? ''
       const s = sessionName ?? ''
       const locale = await localeOf(deps, t, s)
-      return fn({ forgejo: repoClient(s, t, locale), gateway: managerFor(s, t, locale), deps, tenant: t, session: s, locale }, args ?? {})
+      return fn(
+        {
+          forgejo: repoClient(s, t, locale), gateway: managerFor(s, t, locale), deps,
+          tenant: t, session: s, locale,
+          fanout: (org, repo, branch, newRev) => fanout(s, t, locale, org, repo, branch, newRev),
+        },
+        args ?? {},
+      )
     }
   }
 
@@ -274,8 +303,56 @@ export function createWorkspaceConfig(
         const ep = await resolverFor(s, t, locale).resolve(name)
         return { client: makeClient(ep), url: ep.url }
       }
-      return fn({ workspace: managerFor(s, t, locale), locale, resolveWorker }, args ?? {})
+      // A brand-new sandbox is materialized with the session's branch (a free
+      // session has no branch and checks out nothing).
+      const autoCheckout = async (sandbox: string): Promise<string> => {
+        const ref = branchRefOf(s)
+        if (ref === null) return ''
+        const client = makeClient(await resolverFor(s, t, locale).resolve(sandbox))
+        const done = await checkoutIntoSandbox(repoClient(s, t, locale), client, ref.org, ref.repo, ref.branch)
+        await recordBaseline(
+          { forgejo: repoClient(s, t, locale), deps, tenant: t, session: s, locale },
+          sandbox, ref.org, ref.repo, ref.branch,
+        )
+        return tr(locale, 'checkoutDone', { org: ref.org, repo: ref.repo, ref: done.ref, files: done.files })
+      }
+      return fn({ workspace: managerFor(s, t, locale), locale, session: s, resolveWorker, autoCheckout }, args ?? {})
     }
+
+  /**
+   * Fan a repo/branch change out to the session's sandboxes. Only acts when the
+   * change targeted the session's OWN branch (a sandbox holds that branch, not
+   * an arbitrary ref). Best-effort; returns the sandboxes updated.
+   */
+  const fanout = async (
+    s: string,
+    t: string,
+    locale: string,
+    org: string,
+    repo: string,
+    branch: string,
+    newRev = '',
+  ): Promise<number> => {
+    if (s === '') return 0
+    const ref = branchRefOf(s)
+    if (ref === null) return 0
+    // A write with no explicit ref lands on the repo default branch; for a
+    // developer that is its own branch (main is protected), for a maintainer it
+    // is main — both are the session's own branch, so '' matches too.
+    if (ref.org !== org || ref.repo !== repo || (branch !== '' && branch !== ref.branch)) return 0
+    const resolveWorker = async (name: string) => {
+      const ep = await resolverFor(s, t, locale).resolve(name)
+      return makeClient(ep)
+    }
+    try {
+      return await fanoutRef(
+        { gateway: managerFor(s, t, locale), forgejo: repoClient(s, t, locale), resolveWorker, deps, tenant: t, session: s, locale },
+        org, repo, ref.branch, newRev,
+      )
+    } catch {
+      return 0
+    }
+  }
 
   /** Wrap a build (workspace gateway) tool. */
   const buildWrap = (
@@ -308,7 +385,15 @@ export function createWorkspaceConfig(
       const s = sessionName ?? ''
       const locale = await localeOf(deps, t, s)
       const client = await resolveWorkerClient(args ?? {}, s, t, locale)
-      return fn({ client, forgejo: repoClient(s, t, locale), locale }, args ?? {})
+      const ref = branchRefOf(s)
+      return fn(
+        {
+          client, forgejo: repoClient(s, t, locale), locale,
+          ...(ref !== null ? { branch: ref.branch } : {}),
+          fanout: (org, repo, branch, newRev) => fanout(s, t, locale, org, repo, branch, newRev),
+        },
+        args ?? {},
+      )
     }
 
   const handlers: Handlers = {
@@ -345,13 +430,21 @@ export function createWorkspaceConfig(
     'repo-create-org': repoWrap(repoCreateOrg),
     'repo-create-repo': repoWrap(repoCreateRepo),
     'repo-import': repoWrap(repoImport),
+    'repo-remove': repoWrap(repoRemove),
+    'repo-set-push-mirror': repoWrap(repoSetPushMirror),
+    'repo-list-push-mirrors': repoWrap(repoListPushMirrors),
+    'repo-delete-push-mirror': repoWrap(repoDeletePushMirror),
     'repo-build-image': buildWrap(repoBuildImage),
+    'repo-build-preview': buildWrap(repoBuildPreview),
+    'oci-import': buildWrap(ociImport),
     'repo-mail-send': mailWrap(repoMailSend),
 
     // ---- services (long-lived Deployments) ----
     'service-deploy': serviceWrap(serviceDeploy),
+    'service-preview': serviceWrap(servicePreview),
     'service-list': serviceWrap(serviceList),
     'service-delete': serviceWrap(serviceDelete),
+    'service-logs': serviceWrap(serviceLogs),
     'repo-read': repoWrap(repoRead),
     'repo-write': repoWrap(repoWrite),
     'repo-edit': repoWrap(repoEdit),
@@ -391,6 +484,16 @@ export function createWorkspaceConfig(
     id: EXT_ID,
     version: EXT_VERSION,
     tools,
+    // Session-scoped prompt variables: a branch session's `org`/`repo`/`branch`
+    // are resolved from its `org:repo:branch` name and substituted into the
+    // role system prompts (`{{vars.workspace.org}}` etc.). A free session
+    // (no colons) resolves to empty strings; the free-role prompts never
+    // reference them, so nothing is shown.
+    variables: {
+      org: { scope: 'session', resolve: sessionName => sessionRefPart(sessionName, 0) },
+      repo: { scope: 'session', resolve: sessionName => sessionRefPart(sessionName, 1) },
+      branch: { scope: 'session', resolve: sessionName => sessionRefPart(sessionName, 2) },
+    },
     lifecycle: ['created', 'forked', 'renamed', 'deleted'],
     onLifecycle: async (ev, tenant) => {
       const t = tenant ?? ''
@@ -405,8 +508,9 @@ export function createWorkspaceConfig(
         return
       }
       if (ev.kind !== 'deleted') return
-      // Cascade: delete every sandbox this session created (creator == t/sess).
-      // Best-effort; the gateway's idle reaper is the backstop.
+      // Cascade: delete every sandbox bound to this session (its
+      // `worker-manager/session` annotation). Best-effort; the gateway's idle
+      // reaper is the backstop.
       if (t !== '') {
         await deleteSessionSandboxes(managerFor(ev.session_name, t, locale), t, ev.session_name).catch(() => {})
       }
@@ -418,18 +522,30 @@ export function createWorkspaceConfig(
 }
 
 /**
- * Delete every sandbox created by `tenant/session` (the creator annotation the
- * gateway stamps). Best-effort; the gateway's idle reaper is the backstop.
+ * One component of a branch session's `org:repo:branch` name (0=org, 1=repo,
+ * 2=branch); "" for a free session or a missing component. Used to resolve the
+ * `org`/`repo`/`branch` prompt variables.
+ */
+function sessionRefPart(sessionName: string | undefined, index: 0 | 1 | 2): string {
+  const ref = sessionName !== undefined ? parseSessionName(sessionName) : null
+  if (ref === null) return ''
+  return [ref.org, ref.repo, ref.branch][index] ?? ''
+}
+
+/**
+ * Delete every sandbox bound to `session` (matched by the sandbox's
+ * `worker-manager/session` binding, which the gateway filters on). Best-effort;
+ * the gateway's idle reaper is the backstop.
  */
 async function deleteSessionSandboxes(
   workspace: GatewayClient,
   tenant: string,
   session: string,
 ): Promise<void> {
-  const creator = `${tenant}/${session}`
-  const res = await workspace.listSandboxes({})
+  void tenant
+  const res = await workspace.listSandboxes({ session })
   for (const sb of res.sandboxes) {
-    if (sb.creator === creator) await workspace.deleteSandbox({ name: sb.name })
+    if (sb.session === session) await workspace.deleteSandbox({ name: sb.name })
   }
 }
 
@@ -814,37 +930,71 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: REPO_REQUIRED,
   },
   'repo-create-repo': {
-    description: 'Create a repository under `org` (the gateway ensures the org + repo + a protected `main` branch and records ownership). The default branch is always `main`.',
-    descriptions: { zh: '在 `org` 下创建仓库（gateway 负责确保组织 + 仓库 + 受保护的 `main` 分支，并记录归属）。默认分支固定为 `main`。' },
+    description: 'Create a PUBLIC repository under `org` (the gateway ensures the org + repo + a protected `main` branch and records ownership). The default branch is always `main`.',
+    descriptions: { zh: '在 `org` 下创建一个公开仓库（gateway 负责确保组织 + 仓库 + 受保护的 `main` 分支，并记录归属）。默认分支固定为 `main`。' },
     inputSchema: obj(
       {
         ...REPO_ADDR,
-        private: {
-          type: 'boolean',
-          description: 'Create a private repository.',
-          descriptions: { zh: '创建私有仓库。' },
-        },
       },
       ['org', 'repo'],
     ),
     required: REPO_REQUIRED,
   },
   'repo-import': {
-    description: 'Import an EXTERNAL git repository into an org (admin). Forgejo clones the full repository; when `ref` is given, that ref becomes the default branch and the other branches are deleted (single-branch import). Refuses to overwrite an existing repo. `auth-token`/`auth-user` support private sources; `mirror` keeps it synced.',
-    descriptions: { zh: '将外部 git 仓库导入到某组织（管理员）。Forgejo 会克隆完整仓库；给出 `ref` 时，该 ref 会成为默认分支且其余分支被删除（单分支导入）。已存在的仓库会被拒绝。`auth-token`/`auth-user` 支持私有源；`mirror` 保持同步。' },
+    description: 'Import an EXTERNAL git repository into an org as a PUBLIC repo (admin). `ref` selects the SOURCE ref to import — a branch, a tag, or any revision — and it ALWAYS lands on the new repo\'s `main`; with no `ref` the source\'s HEAD branch is imported. Only `main` is created (no other branches/tags). Refuses to overwrite an existing repo. `auth-token`/`auth-user` support private sources.',
+    descriptions: { zh: '将外部 git 仓库作为公开仓库导入到某组织（管理员）。`ref` 选择要导入的源 ref——分支、标签或任意修订——它始终落到新仓库的 `main`；不给 `ref` 时导入源的 HEAD 分支。只创建 `main`（不带其它分支/标签）。已存在的仓库会被拒绝。`auth-token`/`auth-user` 支持私有源。' },
     inputSchema: obj(
       {
         org: str('Target organization.', '目标组织。'),
         url: str('External git clone URL (https/ssh).', '外部 git 克隆地址（https/ssh）。'),
         repo: str('Target repo name (default: derived from the URL).', '目标仓库名（默认：从 URL 推断）。'),
-        ref: str('Import ONLY this branch/ref (default: all branches + source default).', '仅导入该分支/ref（默认：全部分支 + 源默认分支）。'),
+        ref: str('Source branch/tag/rev to import as `main` (default: the source HEAD branch).', '要作为 `main` 导入的源分支/标签/修订（默认：源 HEAD 分支）。'),
         'auth-user': str('Basic-auth username for a private source.', '私有源的基本认证用户名。'),
         'auth-token': str('Access token for a private source.', '私有源的访问令牌。'),
-        private: bool('Make the imported repo private (default true).', '将导入的仓库设为私有（默认 true）。'),
-        mirror: bool('Keep it as a mirror of the source (default false).', '作为源的镜像持续同步（默认 false）。'),
         description: str('Repository description.', '仓库描述。'),
       },
       ['org', 'url'],
+    ),
+    required: REPO_REQUIRED,
+  },
+  'repo-remove': {
+    description: 'DESTRUCTIVE: delete a repository you own (admin) — the git repo, ALL its branch sessions (each cascading to its sandboxes) and the ownership record. The organization is kept. This cannot be undone.',
+    descriptions: { zh: '危险操作：删除你拥有的仓库（管理员）——git 仓库、其全部分支会话（各自级联删除沙箱）以及归属记录。组织保留。不可撤销。' },
+    inputSchema: obj({ ...REPO_ADDR }, ['org', 'repo']),
+    required: REPO_REQUIRED,
+  },
+  'repo-set-push-mirror': {
+    description: 'Register a PUSH MIRROR on a repository you own (admin): its commits are continuously pushed to an external HTTPS git remote. A repo may have MULTIPLE mirrors. Returns the Forgejo-assigned `remote-name` (needed to delete). `sync-on-commit` pushes immediately on every commit; otherwise `interval` (e.g. `8h`, `30m`) sets the periodic sync. `branch-filter` limits which branches are mirrored. `auth-user`/`auth-token` authenticate a private destination.',
+    descriptions: { zh: '在你拥有的仓库上登记一个 PUSH MIRROR（管理员）：其提交会持续推送到外部 HTTPS git 远端。一个仓库可有多个 mirror。返回 Forgejo 分配的 `remote-name`（删除时需要）。`sync-on-commit` 表示每次提交立即推送；否则用 `interval`（如 `8h`、`30m`）设定周期同步。`branch-filter` 限定镜像哪些分支。`auth-user`/`auth-token` 用于私有目标认证。' },
+    inputSchema: obj(
+      {
+        ...REPO_ADDR,
+        'remote-url': str('External HTTPS git URL to push to.', '要推送到的外部 HTTPS git 地址。'),
+        'auth-user': str('Basic-auth username for a private destination.', '私有目标的基本认证用户名。'),
+        'auth-token': str('Access token/password for a private destination.', '私有目标的访问令牌/密码。'),
+        'sync-on-commit': bool('Push immediately on every commit (default false).', '每次提交立即推送（默认 false）。'),
+        interval: str('Periodic sync interval, e.g. 8h or 30m (optional).', '周期同步间隔，如 8h 或 30m（可选）。'),
+        'branch-filter': str('Only mirror branches matching this glob (optional).', '仅镜像匹配该 glob 的分支（可选）。'),
+      },
+      ['org', 'repo', 'remote-url'],
+    ),
+    required: REPO_REQUIRED,
+  },
+  'repo-list-push-mirrors': {
+    description: 'List the push mirrors configured on a repository you own (admin), with each mirror\'s remote name, address, interval and last sync error.',
+    descriptions: { zh: '列出你拥有的仓库上已配置的 push mirror（管理员），含每个 mirror 的 remote name、地址、间隔与上次同步错误。' },
+    inputSchema: obj({ ...REPO_ADDR }, ['org', 'repo']),
+    required: REPO_REQUIRED,
+  },
+  'repo-delete-push-mirror': {
+    description: 'Remove a push mirror from a repository you own (admin) by its `remote-name` (as returned by repo-set-push-mirror / repo-list-push-mirrors).',
+    descriptions: { zh: '按 `remote-name` 从你拥有的仓库移除一个 push mirror（管理员）（remote-name 由 repo-set-push-mirror / repo-list-push-mirrors 返回）。' },
+    inputSchema: obj(
+      {
+        ...REPO_ADDR,
+        'remote-name': str('The mirror\'s remote_name to delete.', '要删除的 mirror 的 remote_name。'),
+      },
+      ['org', 'repo', 'remote-name'],
     ),
     required: REPO_REQUIRED,
   },
@@ -869,20 +1019,70 @@ const TOOL_META: Record<string, ToolMeta> = {
     ),
     required: BUILD_REQUIRED,
   },
+  'repo-build-preview': {
+    description: 'Build a PREVIEW image from a repository Dockerfile (developer). The image NAME is forced to the repo and the TAG is forced to `preview-<branch>-<sha>` (+ optional tag-suffix), so a preview build can NEVER overwrite a release tag. Feed the result to `service-preview`.',
+    descriptions: { zh: '从仓库 Dockerfile 构建 PREVIEW 镜像（开发者）。镜像名强制为仓库名，tag 强制为 `preview-<branch>-<sha>`（可加 tag-suffix），因此预览构建绝不会覆盖正式 tag。产物交给 `service-preview` 使用。' },
+    inputSchema: obj(
+      {
+        ...REPO_ADDR,
+        dockerfile: str('Repo-relative Dockerfile path (default ./Dockerfile).', '仓库相对 Dockerfile 路径（默认 ./Dockerfile）。'),
+        context: str('Repo-relative build context subdirectory (default: repo root).', '仓库相对的构建上下文子目录（默认：仓库根）。'),
+        'tag-suffix': str('Optional suffix appended after the forced preview tag.', '可选后缀，追加在强制预览 tag 之后。'),
+        'build-args': {
+          type: 'object',
+          description: 'Build arguments (--build-arg k=v).',
+          descriptions: { zh: '构建参数（--build-arg k=v）。' },
+          additionalProperties: { type: 'string' },
+        },
+      },
+      ['org', 'repo'],
+    ),
+    required: BUILD_REQUIRED,
+  },
+  'oci-import': {
+    description: 'Mirror an upstream container image (public, or private with auth-user/auth-token) into the deployment registry under an org you own. The image lands at <registry>/<org>/<name>:<tag> and is then usable from service-deploy or as a sandbox base. This is the image analogue of repo-import. Only runnable images can be mirrored (not arbitrary OCI artifacts); multi-arch sources collapse to linux/amd64.',
+    descriptions: { zh: '将上游容器镜像（公开，或经 auth-user/auth-token 的私有镜像）复制到部署 registry 中你拥有的 org 下。镜像落在 <registry>/<org>/<name>:<tag>，之后可用于 service-deploy 或作为沙箱基础镜像。这是镜像版的 repo-import。仅可复制可运行的镜像（不能是任意 OCI 产物）；多架构源会退化为 linux/amd64。' },
+    inputSchema: obj(
+      {
+        org: str('Destination org (must be owned by you; the image lands under it).', '目标组织（必须归你所有；镜像将落在其下）。'),
+        name: str('Destination image name (single path segment).', '目标镜像名（单段路径）。'),
+        tag: str('Destination tag (e.g. the upstream version).', '目标标签（如上游版本号）。'),
+        source: str('Upstream image ref to mirror (e.g. docker.io/library/redis:7.4.2).', '要复制的上游镜像引用（如 docker.io/library/redis:7.4.2）。'),
+        'auth-user': str('Basic-auth username for a private source (optional).', '私有源的基本认证用户名（可选）。'),
+        'auth-token': str('Basic-auth token/password for a private source (optional).', '私有源的基本认证令牌/密码（可选）。'),
+      },
+      ['org', 'name', 'tag', 'source'],
+    ),
+    required: BUILD_REQUIRED,
+  },
   'service-deploy': {
-    description: 'Deploy a container image as a LONG-LIVED Kubernetes service (Deployment + Service). Use this for something a sandbox talks to (an app, a proxy, ...), NOT for execution. The image runs as-is (no worker injection). Returns the in-cluster URL. Updating an existing service you own redeploys it. Set kvm=true for /dev/kvm and gpu-count>0 for NVIDIA GPUs (both non-privileged).',
-    descriptions: { zh: '将容器镜像部署为长期运行的 Kubernetes 服务（Deployment + Service）。用于沙箱需要访问的东西（应用、代理等），不是用来执行的。镜像原样运行（不注入 worker）。返回集群内地址。更新自己拥有的服务即重新部署。kvm=true 可获 /dev/kvm，gpu-count>0 可获 NVIDIA GPU（均非特权）。' },
+    description: 'Deploy a container image as a LONG-LIVED Kubernetes service (Deployment + Service). Use this for something a sandbox talks to (an app, a proxy, ...), NOT for execution. The image runs as-is (no worker injection). Returns the in-cluster URL and anonymous public URLs (`https://<name>.<domain>`, one per public port). Set `services` to expose ports: each entry is `{ preset: tcp80|tcp443|udp443, target-port, name? }`. tcp80 is the ONLY publicly reachable preset (the app must serve HTTP on its target port); tcp443/udp443 are in-cluster only. Entries sharing the same `name` merge into one Service (multi-port); a second public endpoint needs a distinct `name` (its host becomes `<name>-<name>.<domain>`). Omit `services` for a single public port 80 -> container-port. Updating an existing service you own redeploys it. Set kvm=true for /dev/kvm and gpu-count>0 for NVIDIA GPUs (both non-privileged).',
+    descriptions: { zh: '将容器镜像部署为长期运行的 Kubernetes 服务（Deployment + Service）。用于沙箱需要访问的东西（应用、代理等），不是用来执行的。镜像原样运行（不注入 worker）。返回集群内地址与匿名公开地址（`https://<name>.<domain>`，每个公开端口一个）。用 `services` 声明端口：每项 `{ preset: tcp80|tcp443|udp443, target-port, name? }`。只有 tcp80 可公开访问（应用需在其目标端口提供 HTTP）；tcp443/udp443 仅集群内。相同 `name` 的项合并为一个 Service（多端口）；要第二个公开端点需不同的 `name`（其主机名为 `<name>-<name>.<domain>`）。省略 `services` 即单个公开端口 80 → 容器端口。更新自己拥有的服务即重新部署。kvm=true 可获 /dev/kvm，gpu-count>0 可获 NVIDIA GPU（均非特权）。' },
     inputSchema: obj(
       {
         image: str('Image to deploy (see list-oci-images).', '要部署的镜像（见 list-oci-images）。'),
         name: str('Service name (default: derived from the session).', '服务名（默认：由会话名派生）。'),
-        'container-port': int('Container port the app listens on (default 8080).', '应用监听的容器端口（默认 8080）。'),
-        'service-port': int('In-cluster Service port (default 80).', '集群内 Service 端口（默认 80）。'),
+        'container-port': int('Default target port for entries without one (default 8080).', '未指定 target-port 的条目所用的默认容器端口（默认 8080）。'),
+        'service-port': int('Deprecated; prefer `services`.', '已弃用；请用 `services`。'),
         replicas: int('Replicas (default 1).', '副本数（默认 1）。'),
         cpu: str('CPU request/limit (e.g. 250m).', 'CPU 请求/上限（如 250m）。'),
         memory: str('Memory request/limit (e.g. 256Mi).', '内存请求/上限（如 256Mi）。'),
         command: { type: 'array', items: { type: 'string' }, description: 'Command override (argv).', descriptions: { zh: '命令覆盖（argv）。' } },
         env: { type: 'object', additionalProperties: { type: 'string' }, description: 'Environment variables.', descriptions: { zh: '环境变量。' } },
+        services: {
+          type: 'array',
+          description: 'Ports to expose. Each: { preset (tcp80|tcp443|udp443), target-port, name? }. Omit for a single public port 80.',
+          descriptions: { zh: '要暴露的端口。每项：{ preset (tcp80|tcp443|udp443), target-port, name? }。省略即单个公开端口 80。' },
+          items: {
+            type: 'object',
+            properties: {
+              preset: { type: 'string', enum: ['tcp80', 'tcp443', 'udp443'] },
+              'target-port': int('Container port to forward to (default container-port).', '转发的容器端口（默认 container-port）。'),
+              name: str('Service suffix: "" = primary; else a sibling service <name>-<suffix>.', '服务后缀：空 = 主服务；否则为兄弟服务 <name>-<后缀>。'),
+            },
+            required: ['preset'],
+          },
+        },
         kvm: { type: 'boolean', description: 'Request KVM (/dev/kvm) — non-privileged, via the device plugin.', descriptions: { zh: '请求 KVM（/dev/kvm）——非特权，经 device plugin。' } },
         'gpu-count': int('Number of NVIDIA GPUs to request (0 = none; needs the GPU device plugin).', '请求的 NVIDIA GPU 卡数（0 = 无；需 GPU device plugin）。'),
       },
@@ -891,15 +1091,62 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: SANDBOX_REQUIRED,
   },
   'service-list': {
-    description: 'List the services this tenant deployed (name, phase, image, url, replicas).',
-    descriptions: { zh: '列出本租户部署的服务（名称、状态、镜像、地址、副本数）。' },
+    description: 'List the services this tenant deployed (name, phase, image, in-cluster url, ports, public urls, replicas).',
+    descriptions: { zh: '列出本租户部署的服务（名称、状态、镜像、集群内地址、端口、公开地址、副本数）。' },
     inputSchema: obj({}),
+    required: SANDBOX_REQUIRED,
+  },
+  'service-preview': {
+    description: 'Deploy a PREVIEW service for verification (developer): session-bound, CLUSTER-ONLY (no public URL), and reclaimed on session end or after a TTL. The name is prefixed with the session slug so it never collides with a release service. Use it to run an image and verify it in a sandbox; read output with `service-logs`.',
+    descriptions: { zh: '部署用于验证的 PREVIEW 服务（开发者）：绑定会话、仅集群内可达（无公开地址）、会话结束或超过 TTL 后自动回收。名字会加上会话前缀，绝不与正式服务冲突。用它运行镜像并在沙箱中验证；用 `service-logs` 读取输出。' },
+    inputSchema: obj(
+      {
+        image: str('Image to run (e.g. from repo-build-preview).', '要运行的镜像（如来自 repo-build-preview）。'),
+        name: str('Base name (a DNS-1123 label); the gateway prefixes it with the session slug.', '基础名（DNS-1123 label）；gateway 会加上会话前缀。'),
+        'container-port': int('Default target port for entries without one (default 8080).', '未指定 target-port 的条目所用的默认容器端口（默认 8080）。'),
+        cpu: str('CPU request/limit (e.g. 250m).', 'CPU 请求/上限（如 250m）。'),
+        memory: str('Memory request/limit (e.g. 256Mi).', '内存请求/上限（如 256Mi）。'),
+        command: { type: 'array', items: { type: 'string' }, description: 'Command override (argv).', descriptions: { zh: '命令覆盖（argv）。' } },
+        env: { type: 'object', additionalProperties: { type: 'string' }, description: 'Environment variables.', descriptions: { zh: '环境变量。' } },
+        services: {
+          type: 'array',
+          description: 'Ports to expose (cluster-internal only). Each: { preset, target-port, name? }.',
+          descriptions: { zh: '要暴露的端口（仅集群内）。每项：{ preset, target-port, name? }。' },
+          items: {
+            type: 'object',
+            properties: {
+              preset: { type: 'string', enum: ['tcp80', 'tcp443', 'udp443'] },
+              'target-port': int('Container port to forward to (default container-port).', '转发的容器端口（默认 container-port）。'),
+              name: str('Service suffix.', '服务后缀。'),
+            },
+            required: ['preset'],
+          },
+        },
+        'ttl-seconds': int('TTL before reclamation (0 = deployment default).', '回收前的 TTL（0 = 部署默认）。'),
+        kvm: { type: 'boolean', description: 'Request KVM (/dev/kvm) — non-privileged.', descriptions: { zh: '请求 KVM（/dev/kvm）——非特权。' } },
+        'gpu-count': int('Number of NVIDIA GPUs to request (0 = none).', '请求的 NVIDIA GPU 卡数（0 = 无）。'),
+      },
+      ['image'],
+    ),
     required: SANDBOX_REQUIRED,
   },
   'service-delete': {
     description: 'Delete a deployed service (Deployment + Service).',
     descriptions: { zh: '删除已部署的服务（Deployment + Service）。' },
     inputSchema: obj({ name: str('Service name.', '服务名。') }, ['name']),
+    required: SANDBOX_REQUIRED,
+  },
+  'service-logs': {
+    description: 'Read a service\'s container log (a bounded tail). Use `previous` to read the crashed instance before a restart (CrashLoopBackOff). Cluster-observed via the gateway.',
+    descriptions: { zh: '读取服务的容器日志（有界 tail）。用 `previous` 读取重启前崩溃的那次实例（CrashLoopBackOff）。经 gateway 从集群读取。' },
+    inputSchema: obj(
+      {
+        name: str('Service name.', '服务名。'),
+        'tail-lines': int('Number of trailing lines (0 = deployment default).', '末尾行数（0 = 部署默认）。'),
+        previous: { type: 'boolean', description: 'Read the previous container instance (the crash).', descriptions: { zh: '读取上一个容器实例（崩溃那次）。' } },
+      },
+      ['name'],
+    ),
     required: SANDBOX_REQUIRED,
   },
   'repo-read': {
@@ -972,30 +1219,14 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: REPO_REQUIRED,
   },
   'repo-commit': {
-    description: 'Commit several files to the repository atomically as ONE commit (create/update/delete). Optionally create a new branch in the same commit.',
-    descriptions: { zh: '把多个文件原子地提交为一次提交（create/update/delete）。可在同一次提交中创建新分支。' },
+    description: 'Finalize the branch\'s staged changes under `message` and open a fresh staging area. repo-write/repo-edit/repo-delete accumulate into one staging commit; this names that commit. Required before opening or merging a change request.',
+    descriptions: { zh: '用 `message` finalize 分支上已暂存的改动，并开启新的暂存区。repo-write/repo-edit/repo-delete 会累积进同一个暂存提交；本工具为该提交命名。在创建或合并合并请求之前必须执行。' },
     inputSchema: obj(
       {
         ...REPO_ADDR,
         message: str('Commit message.', '提交信息。'),
-        'new-branch': str('Create this new branch from `ref` and commit there (optional).', '从 `ref` 创建该新分支并在其上提交（可选）。'),
-        files: {
-          type: 'array',
-          description: 'Files to commit. Each: { path, operation (create|update|delete), content?, sha? }.',
-          descriptions: { zh: '要提交的文件。每项：{ path, operation (create|update|delete), content?, sha? }。' },
-          items: {
-            type: 'object',
-            properties: {
-              path: str('Repo-relative path.', '仓库相对路径。'),
-              operation: { type: 'string', enum: ['create', 'update', 'delete'] },
-              content: str('UTF-8 content (ignored for delete).', 'UTF-8 内容（delete 时忽略）。'),
-              sha: str('Base blob sha for optimistic locking (update/delete).', '乐观锁用的基础 blob sha（update/delete）。'),
-            },
-            required: ['path'],
-          },
-        },
       },
-      ['org', 'repo', 'message', 'files'],
+      ['org', 'repo', 'message'],
     ),
     required: REPO_REQUIRED,
   },
