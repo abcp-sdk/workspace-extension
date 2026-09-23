@@ -109,7 +109,20 @@ export async function serviceList(
       `  session=${s.session || '-'}`
     )
   })
-  return { content: tr(ctx.locale, 'serviceListHeader', { count: svcs.length }) + '\n' + lines.join('\n'), data: { count: svcs.length } }
+  return {
+    content: tr(ctx.locale, 'serviceListHeader', { count: svcs.length }) + '\n' + lines.join('\n'),
+    data: {
+      count: svcs.length,
+      services: svcs.map(s => ({
+        name: s.name,
+        phase: s.phase,
+        image: s.image,
+        url: s.url,
+        session: s.session,
+        publicUrl: (s.ports ?? []).filter(p => p.publicUrl).map(p => p.publicUrl)[0] ?? '',
+      })),
+    },
+  }
 }
 
 /** `service-preview`: deploy a session-bound, cluster-only preview service. */

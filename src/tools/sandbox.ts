@@ -153,7 +153,20 @@ export async function sandboxList(
   const capped = capLines(lines)
   let content = capped.kept.join('\n')
   if (capped.truncated) content += truncationNote(capped, capped.kept.length, lines.length, ctx.locale)
-  return { content, data: { count: workers.length } }
+  return {
+    content,
+    data: {
+      count: workers.length,
+      sandboxes: workers.map(w => ({
+        name: w.name,
+        phase: w.phase,
+        image: w.image,
+        url: w.url,
+        creator: w.creator,
+        session: w.session,
+      })),
+    },
+  }
 }
 
 /** `sandbox-status`: one sandbox's live state. */
