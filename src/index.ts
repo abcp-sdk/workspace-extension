@@ -28,6 +28,7 @@ import { localeOf, tr } from './i18n.js'
 import { materializeLifecycle, parseSessionName } from './tools/lifecycle.js'
 import { domainOf, strArg } from './tools/shared.js'
 import {
+  deleteFile,
   downloadFile,
   editFile,
   type FileCtx,
@@ -134,7 +135,7 @@ export interface WorkspaceExtensionOpts {
  * execution (easyworker), repo-* tools (Forgejo) and the checkout/port bridge.
  * Config is resolved per call.
  *
- * `bus` is only needed for the agent file RPCs (sandbox-download/upload).
+ * `bus` is only needed for the agent file RPCs (sandbox-file-download/upload).
  */
 export function createWorkspaceConfig(
   bus: Bus | undefined,
@@ -416,12 +417,13 @@ export function createWorkspaceConfig(
     'sandbox-job-kill': jobWrap(jobKill),
     'sandbox-job-stdin': jobWrap(jobStdin),
     'sandbox-job-list': jobWrap(jobList),
-    'sandbox-read': fileWrap(readFile),
-    'sandbox-write': fileWrap(writeFile),
-    'sandbox-edit': fileWrap(editFile),
-    'sandbox-ls': fileWrap(listFiles),
-    'sandbox-download': fileWrap(downloadFile),
-    'sandbox-upload': fileWrap(uploadFile),
+    'sandbox-file-read': fileWrap(readFile),
+    'sandbox-file-write': fileWrap(writeFile),
+    'sandbox-file-edit': fileWrap(editFile),
+    'sandbox-file-ls': fileWrap(listFiles),
+    'sandbox-file-rm': fileWrap(deleteFile),
+    'sandbox-file-download': fileWrap(downloadFile),
+    'sandbox-file-upload': fileWrap(uploadFile),
     'sandbox-checkout': bridgeWrap(sandboxCheckout),
     'sandbox-port': bridgeWrap(sandboxPort),
 
@@ -445,11 +447,11 @@ export function createWorkspaceConfig(
     'service-list': serviceWrap(serviceList),
     'service-delete': serviceWrap(serviceDelete),
     'service-logs': serviceWrap(serviceLogs),
-    'repo-read': repoWrap(repoRead),
-    'repo-write': repoWrap(repoWrite),
-    'repo-edit': repoWrap(repoEdit),
-    'repo-delete': repoWrap(repoDelete),
-    'repo-list': repoWrap(repoList),
+    'repo-file-read': repoWrap(repoRead),
+    'repo-file-write': repoWrap(repoWrite),
+    'repo-file-edit': repoWrap(repoEdit),
+    'repo-file-delete': repoWrap(repoDelete),
+    'repo-file-list': repoWrap(repoList),
     'repo-commit': repoWrap(repoCommit),
     'repo-log': repoWrap(repoLog),
     'repo-show': repoWrap(repoShow),
@@ -463,7 +465,7 @@ export function createWorkspaceConfig(
     'repo-mr-comment': repoWrap(repoMrComment),
     'repo-mr-merge': repoWrap(repoMrMerge),
     'repo-branch-sync': repoWrap(repoBranchSync),
-    'repo-restore': repoWrap(repoRestore),
+    'repo-file-restore': repoWrap(repoRestore),
   }
 
   const tools: Record<string, ToolSpec> = {}
@@ -721,10 +723,10 @@ const TOOL_META: Record<string, ToolMeta> = {
   },
   'sandbox-job-start': {
     description:
-      'Start a long-running shell command and return the job id immediately (no waiting). Drive it with sandbox-job-wait/sandbox-job-output/sandbox-job-stdin/sandbox-job-kill. ' +
+      'Start a long-running shell command and return the job id immediately (no waiting). Drive it with sandbox-job-wait/sandbox-job-output/sandbox-job-stdin/sandbox-job-kill. To stop a long job, call sandbox-job-kill yourself — no deadline is armed. ' +
       EXEC_WARNING_EN,
     descriptions: {
-      zh: '启动一个长时间运行的 shell 命令并立即返回 job id（不等待）。用 sandbox-job-wait/sandbox-job-output/sandbox-job-stdin/sandbox-job-kill 进行后续控制。' +
+      zh: '启动一个长时间运行的 shell 命令并立即返回 job id（不等待）。用 sandbox-job-wait/sandbox-job-output/sandbox-job-stdin/sandbox-job-kill 进行后续控制。要停止长任务请自行调用 sandbox-job-kill——不会自动设置截止时间。' +
         EXEC_WARNING_ZH,
     },
     inputSchema: obj(
@@ -799,9 +801,9 @@ const TOOL_META: Record<string, ToolMeta> = {
     inputSchema: obj({}),
     required: SANDBOX_REQUIRED,
   },
-  'sandbox-read': {
-    description: 'Read a text file from the sandbox workspace with line numbers, windowed by offset/limit. Binary files are rejected. Reading records the lines as "seen" so a later sandbox-edit may change them.',
-    descriptions: { zh: '从沙箱工作区读取文本文件并带行号，通过 offset/limit 分窗。二进制文件会被拒绝。读取会记录已“看到”的行，之后 sandbox-edit 才能修改这些行。' },
+  'sandbox-file-read': {
+    description: 'Read a text file from the sandbox workspace with line numbers, windowed by offset/limit (the window is fetched server-side, so a slice of a huge file is not fully transferred). Binary files are rejected. Reading records the lines as "seen" so a later sandbox-file-edit may change them.',
+    descriptions: { zh: '从沙箱工作区读取文本文件并带行号，通过 offset/limit 分窗（窗口在服务端获取，大文件只取所需片段）。二进制文件会被拒绝。读取会记录已“看到”的行，之后 sandbox-file-edit 才能修改这些行。' },
     inputSchema: obj(
       {
         path: str('File path, relative to the workspace root.', '文件路径，相对于工作区根目录。'),
@@ -812,7 +814,7 @@ const TOOL_META: Record<string, ToolMeta> = {
     ),
     required: SANDBOX_REQUIRED,
   },
-  'sandbox-write': {
+  'sandbox-file-write': {
     description: 'Write (overwrite) a text file in the sandbox workspace, then return the whole file with line numbers. Rejected if the content exceeds 120 KiB. The whole file counts as "seen".',
     descriptions: { zh: '向沙箱工作区写入（覆盖）文本文件，随后返回带行号的全文件。内容超过 120 KiB 会被拒绝。整个文件视为已“看到”。' },
     inputSchema: obj(
@@ -824,7 +826,7 @@ const TOOL_META: Record<string, ToolMeta> = {
     ),
     required: SANDBOX_REQUIRED,
   },
-  'sandbox-edit': {
+  'sandbox-file-edit': {
     description: 'Edit a sandbox file by line numbers (1-based). When end-line < start-line it inserts before start-line; otherwise it replaces [start-line, end-line]. Out-of-range line numbers are clamped. The session must have read (or written) the file first, and may only edit lines it has seen; the file must be unchanged since that read. A successful edit requires a fresh read. Returns a one-line summary followed by a unified diff.',
     descriptions: { zh: '按行号（从 1 开始）编辑沙箱文件。end-line < start-line 时在 start-line 前插入；否则替换 [start-line, end-line]。越界行号会夹取到文件范围。会话必须先 read（或 write）过该文件，且只能修改已“看到”的行；文件自上次读取后不得变化。编辑成功后需重新 read。返回一行摘要及 unified diff。' },
     inputSchema: obj(
@@ -838,9 +840,9 @@ const TOOL_META: Record<string, ToolMeta> = {
     ),
     required: SANDBOX_REQUIRED,
   },
-  'sandbox-ls': {
-    description: 'List a sandbox path as a breadth-first tree (levels 1..depth) with sizes. Directories beyond the cap stay collapsed.',
-    descriptions: { zh: '以广度优先树（第 1..depth 层）列出沙箱路径并显示大小。超过上限的目录保持折叠。' },
+  'sandbox-file-ls': {
+    description: 'List a sandbox path as a tree (levels 1..depth) with sizes, in ONE server-side recursive listing. Directories beyond the cap stay collapsed.',
+    descriptions: { zh: '以树形（第 1..depth 层）列出沙箱路径并显示大小，单次服务端递归列出。超过上限的目录保持折叠。' },
     inputSchema: obj(
       {
         path: str('Directory or file path, relative to the workspace root.', '目录或文件路径，相对于工作区根目录。'),
@@ -851,7 +853,18 @@ const TOOL_META: Record<string, ToolMeta> = {
     ),
     required: SANDBOX_REQUIRED,
   },
-  'sandbox-download': {
+  'sandbox-file-rm': {
+    description: 'Remove a file or directory tree from the sandbox workspace (recursive). Its read-before-edit state is cleared.',
+    descriptions: { zh: '从沙箱工作区删除文件或目录树（递归）。其读前编辑状态会被清除。' },
+    inputSchema: obj(
+      {
+        path: str('File or directory path, relative to the workspace root.', '文件或目录路径，相对于工作区根目录。'),
+      },
+      ['path'],
+    ),
+    required: SANDBOX_REQUIRED,
+  },
+  'sandbox-file-download': {
     description: 'Download a stored file (agent `file:<code>`) into the sandbox workspace at `path`.',
     descriptions: { zh: '将已存储文件（agent 的 `file:<code>`）下载到沙箱工作区的 `path`。' },
     inputSchema: obj(
@@ -863,7 +876,7 @@ const TOOL_META: Record<string, ToolMeta> = {
     ),
     required: SANDBOX_REQUIRED,
   },
-  'sandbox-upload': {
+  'sandbox-file-upload': {
     description: 'Upload a sandbox file to the agent file store, returning its `file:<code>`. The content type is derived by the agent.',
     descriptions: { zh: '将沙箱文件上传到 agent 文件存储，返回 `file:<code>`。内容类型由 agent 推断。' },
     inputSchema: obj(
@@ -1149,9 +1162,9 @@ const TOOL_META: Record<string, ToolMeta> = {
     ),
     required: SANDBOX_REQUIRED,
   },
-  'repo-read': {
-    description: 'Read a text file from a repository ref, line-numbered (1-based), windowed by offset/limit. Records the lines as "seen" so a later repo-edit may change them.',
-    descriptions: { zh: '从仓库某个 ref 读取文本文件，带行号（从 1 开始），用 offset/limit 分窗。会记录已“看到”的行，之后 repo-edit 才能修改。' },
+  'repo-file-read': {
+    description: 'Read a text file from a repository ref, line-numbered (1-based), windowed by offset/limit. Records the lines as "seen" so a later repo-file-edit may change them.',
+    descriptions: { zh: '从仓库某个 ref 读取文本文件，带行号（从 1 开始），用 offset/limit 分窗。会记录已“看到”的行，之后 repo-file-edit 才能修改。' },
     inputSchema: obj(
       {
         ...REPO_ADDR,
@@ -1163,7 +1176,7 @@ const TOOL_META: Record<string, ToolMeta> = {
     ),
     required: REPO_REQUIRED,
   },
-  'repo-write': {
+  'repo-file-write': {
     description: 'Create or overwrite a file in the repository as ONE commit. Uses the current blob sha for optimistic locking.',
     descriptions: { zh: '在仓库中创建或覆盖文件，作为一次提交。使用当前 blob sha 做乐观锁。' },
     inputSchema: obj(
@@ -1177,9 +1190,9 @@ const TOOL_META: Record<string, ToolMeta> = {
     ),
     required: REPO_REQUIRED,
   },
-  'repo-edit': {
-    description: 'Edit a repository file by line numbers (1-based) as ONE commit. end-line < start-line inserts; otherwise replaces [start-line, end-line]. Requires a prior repo-read of the file, only the seen lines may change, and the file must be unchanged since (blob sha). Returns a summary + unified diff.',
-    descriptions: { zh: '按行号（从 1 开始）编辑仓库文件，作为一次提交。end-line < start-line 插入；否则替换 [start-line, end-line]。必须先 repo-read 过该文件，只能改已“看到”的行，且文件自读取后未变化（blob sha）。返回摘要 + unified diff。' },
+  'repo-file-edit': {
+    description: 'Edit a repository file by line numbers (1-based) as ONE commit. end-line < start-line inserts; otherwise replaces [start-line, end-line]. Requires a prior repo-file-read of the file, only the seen lines may change, and the file must be unchanged since (blob sha). Returns a summary + unified diff.',
+    descriptions: { zh: '按行号（从 1 开始）编辑仓库文件，作为一次提交。end-line < start-line 插入；否则替换 [start-line, end-line]。必须先 repo-file-read 过该文件，只能改已“看到”的行，且文件自读取后未变化（blob sha）。返回摘要 + unified diff。' },
     inputSchema: obj(
       {
         ...REPO_ADDR,
@@ -1193,7 +1206,7 @@ const TOOL_META: Record<string, ToolMeta> = {
     ),
     required: REPO_REQUIRED,
   },
-  'repo-delete': {
+  'repo-file-delete': {
     description: 'Delete a file from the repository as ONE commit. Uses the current blob sha for optimistic locking.',
     descriptions: { zh: '从仓库删除文件，作为一次提交。使用当前 blob sha 做乐观锁。' },
     inputSchema: obj(
@@ -1206,7 +1219,7 @@ const TOOL_META: Record<string, ToolMeta> = {
     ),
     required: REPO_REQUIRED,
   },
-  'repo-list': {
+  'repo-file-list': {
     description: 'List a repository directory (or a single file) at a ref.',
     descriptions: { zh: '列出仓库某个 ref 下的目录（或单个文件）。' },
     inputSchema: obj(
@@ -1219,8 +1232,8 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: REPO_REQUIRED,
   },
   'repo-commit': {
-    description: 'Finalize the branch\'s staged changes under `message` and open a fresh staging area. repo-write/repo-edit/repo-delete accumulate into one staging commit; this names that commit. Required before opening or merging a change request.',
-    descriptions: { zh: '用 `message` finalize 分支上已暂存的改动，并开启新的暂存区。repo-write/repo-edit/repo-delete 会累积进同一个暂存提交；本工具为该提交命名。在创建或合并合并请求之前必须执行。' },
+    description: 'Finalize the branch\'s staged changes under `message` and open a fresh staging area. repo-file-write/repo-file-edit/repo-file-delete accumulate into one staging commit; this names that commit. Required before opening or merging a change request.',
+    descriptions: { zh: '用 `message` finalize 分支上已暂存的改动，并开启新的暂存区。repo-file-write/repo-file-edit/repo-file-delete 会累积进同一个暂存提交；本工具为该提交命名。在创建或合并合并请求之前必须执行。' },
     inputSchema: obj(
       {
         ...REPO_ADDR,
@@ -1384,7 +1397,7 @@ const TOOL_META: Record<string, ToolMeta> = {
     ),
     required: REPO_REQUIRED,
   },
-  'repo-restore': {
+  'repo-file-restore': {
     description: 'Restore ONE file on a branch to its exact content at another ref or commit (binary-safe). Use it to recover a file version during conflict resolution.',
     descriptions: { zh: '把分支上的某个文件恢复为另一 ref 或提交时的确切内容（二进制安全）。用于解决冲突时找回文件版本。' },
     inputSchema: obj(
@@ -1409,8 +1422,8 @@ const WORKER_TOOLS = new Set([
   'sandbox-info', 'sandbox-exec',
   'sandbox-job-start', 'sandbox-job-output', 'sandbox-job-wait',
   'sandbox-job-kill', 'sandbox-job-stdin', 'sandbox-job-list',
-  'sandbox-read', 'sandbox-write', 'sandbox-edit', 'sandbox-ls',
-  'sandbox-download', 'sandbox-upload', 'sandbox-checkout', 'sandbox-port',
+  'sandbox-file-read', 'sandbox-file-write', 'sandbox-file-edit', 'sandbox-file-ls', 'sandbox-file-rm',
+  'sandbox-file-download', 'sandbox-file-upload', 'sandbox-checkout', 'sandbox-port',
 ])
 
 // Inject the required `worker-name` argument into every execution tool's

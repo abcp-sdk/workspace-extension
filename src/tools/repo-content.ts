@@ -132,7 +132,7 @@ function clampInt(v: number | undefined, def: number, max: number): number {
   return Math.min(n, max)
 }
 
-/** `repo-read`: line-numbered text window; records seen ranges + blob sha. */
+/** `repo-file-read`: line-numbered text window; records seen ranges + blob sha. */
 export async function repoRead(
   ctx: RepoCtx,
   args: Record<string, unknown>,
@@ -177,7 +177,7 @@ export async function repoRead(
   return { content, data: { org: r.org, repo: r.repo, ref: r.ref, path, sha: got.sha, total_lines: win.total, start: win.start, shown } }
 }
 
-/** `repo-write`: overwrite one file (one commit); marks the whole file seen. */
+/** `repo-file-write`: overwrite one file (one commit); marks the whole file seen. */
 export async function repoWrite(
   ctx: RepoCtx,
   args: Record<string, unknown>,
@@ -228,7 +228,7 @@ export async function repoWrite(
   }
 }
 
-/** `repo-edit`: line edit with read-before-edit guard + unified diff. */
+/** `repo-file-edit`: line edit with read-before-edit guard + unified diff. */
 export async function repoEdit(
   ctx: RepoCtx,
   args: Record<string, unknown>,
@@ -304,7 +304,7 @@ export async function repoEdit(
   }
 }
 
-/** `repo-delete`: delete one file (one commit). */
+/** `repo-file-delete`: delete one file (one commit). */
 export async function repoDelete(
   ctx: RepoCtx,
   args: Record<string, unknown>,
@@ -334,7 +334,7 @@ export async function repoDelete(
   }
 }
 
-/** `repo-list`: list a directory (or the repo tree root). */
+/** `repo-file-list`: list a directory (or the repo tree root). */
 export async function repoList(
   ctx: RepoCtx,
   args: Record<string, unknown>,

@@ -7,6 +7,7 @@ import {
   windowLines,
 } from '../src/tools/text.js'
 import {
+  deleteFile,
   editFile,
   readFile,
   uploadFile,
@@ -18,16 +19,36 @@ import type { SessionEditState } from '../src/tools/edit-state.js'
 
 const enc = (s: string) => new TextEncoder().encode(s)
 
-/** A fake worker exposing only the file calls the file tools use. */
+/** A fake worker exposing only the file calls the file tools use. Implements
+ *  the WINDOWED FileRead (startLine/endLine + totalLines) like worker.v1. */
 function fakeClient(files: Record<string, Uint8Array>): WorkerClient {
+  const split = (c: Uint8Array): string[] => {
+    const t = new TextDecoder().decode(c)
+    const lines = t.split('\n')
+    if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
+    return lines
+  }
   return {
-    fileRead: async (req: { path: string }) => {
+    fileRead: async (req: { path: string; startLine?: number; endLine?: number }) => {
       const c = files[req.path]
       if (c === undefined) throw new Error(`not found: ${req.path}`)
-      return { content: c }
+      const all = split(c)
+      const start = req.startLine && req.startLine > 0 ? req.startLine : 0
+      const end = req.endLine && req.endLine > 0 ? req.endLine : all.length
+      // A whole-file window returns the ORIGINAL bytes verbatim (byte-exact);
+      // a partial window is the slice joined with '\n'.
+      const whole = start === 0 && end >= all.length
+      const content = whole
+        ? c
+        : new TextEncoder().encode(all.slice(start, end).join('\n'))
+      return { content, totalLines: all.length, startLine: start, endLine: start + all.slice(start, end).length }
     },
     fileWrite: async (req: { path: string; content: Uint8Array }) => {
       files[req.path] = req.content
+      return { ok: true }
+    },
+    fileDelete: async (req: { path: string }) => {
+      delete files[req.path]
       return { ok: true }
     },
   } as unknown as WorkerClient
@@ -303,6 +324,34 @@ describe('edit (read-before-edit guard)', () => {
     })
     expect(String(r.content)).toContain('No changes')
     expect(decode(files)).toBe('1\n2\n3\n')
+  })
+})
+
+describe('read: server-side window', () => {
+  it('reports the whole-file total while returning only the window', async () => {
+    const files = { 'a.txt': enc('l0\nl1\nl2\nl3\nl4') }
+    const r = await readFile(fileCtx(files), { path: 'a.txt', offset: 1, limit: 2 })
+    expect(r.content).toContain('2  l1')
+    expect(r.content).toContain('3  l2')
+    expect(r.content).toContain('showing lines 2-3 of 5')
+    expect(r.data).toMatchObject({ total_lines: 5, start: 1, shown: 2 })
+  })
+})
+
+describe('rm', () => {
+  it('deletes a file and clears its seen state', async () => {
+    const files = { 'a.txt': enc('x') }
+    const ctx = fileCtx(files)
+    await readFile(ctx, { path: 'a.txt' })
+    const r = await deleteFile(ctx, { path: 'a.txt' })
+    expect(r.content).toContain('a.txt')
+    expect(files['a.txt']).toBeUndefined()
+  })
+
+  it('missing path is typed invalid_argument', async () => {
+    const err = await deleteFile(fileCtx({}), {}).catch(e => e)
+    expect(err).toBeInstanceOf(TypedToolError)
+    expect((err as TypedToolError).code).toBe('invalid_argument')
   })
 })
 

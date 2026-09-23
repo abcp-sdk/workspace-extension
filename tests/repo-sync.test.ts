@@ -78,7 +78,7 @@ function restoreCtx() {
   return { c, writes }
 }
 
-describe('repo-restore', () => {
+describe('repo-file-restore', () => {
   it('restores text content from a ref onto the target branch', async () => {
     const { c, writes } = restoreCtx()
     const res = await repoRestore(c, { org: 'acme', repo: 'web', path: 'a.txt', from: 'main', ref: 'feature/x' })

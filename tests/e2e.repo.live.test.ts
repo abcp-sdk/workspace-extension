@@ -86,15 +86,15 @@ maybe('live e2e: workspace repo-* tools against a real Forgejo', () => {
 
     // ---- write a scratch file, then read/edit it ----
     const scratch = `e2e-scratch-${Date.now()}.txt`
-    await call('repo-write', {
+    await call('repo-file-write', {
       org: E2E_ORG, repo: E2E_REPO, path: scratch,
       content: 'line1\nline2\nline3\n', message: 'e2e: write scratch',
     })
-    const read = await call('repo-read', { org: E2E_ORG, repo: E2E_REPO, path: scratch })
+    const read = await call('repo-file-read', { org: E2E_ORG, repo: E2E_REPO, path: scratch })
     expect(read.content).toContain('1  line1')
     expect(read.content).toContain('3  line3')
 
-    const edited = await call('repo-edit', {
+    const edited = await call('repo-file-edit', {
       org: E2E_ORG, repo: E2E_REPO, path: scratch,
       'start-line': 2, 'end-line': 2, content: 'LINE2', message: 'e2e: edit scratch',
     })
@@ -104,7 +104,7 @@ maybe('live e2e: workspace repo-* tools against a real Forgejo', () => {
 
     // ---- a second edit without re-read is refused ----
     const stale = await agent
-      .callTool(tenant, session, 'workspace', 'repo-edit', `call-stale-${Date.now()}`, {
+      .callTool(tenant, session, 'workspace', 'repo-file-edit', `call-stale-${Date.now()}`, {
         org: E2E_ORG, repo: E2E_REPO, path: scratch,
         'start-line': 2, 'end-line': 2, content: 'Z',
       })
@@ -116,7 +116,7 @@ maybe('live e2e: workspace repo-* tools against a real Forgejo', () => {
     expect(log.content).toContain('e2e:')
 
     // ---- cleanup: delete the scratch file ----
-    await call('repo-delete', {
+    await call('repo-file-delete', {
       org: E2E_ORG, repo: E2E_REPO, path: scratch, message: 'e2e: delete scratch',
     })
   }, 120_000)
@@ -165,8 +165,8 @@ maybe('live e2e: workspace repo-* tools against a real Forgejo', () => {
 
     // Create a NEW file in the sandbox and port it to a fresh dir.
     const dir = `e2e-port-${Date.now()}`
-    await call('sandbox-write', { 'worker-name': worker, path: `${dir}/a.txt`, content: 'A\n' })
-    await call('sandbox-write', { 'worker-name': worker, path: `${dir}/b.txt`, content: 'B\n' })
+    await call('sandbox-file-write', { 'worker-name': worker, path: `${dir}/a.txt`, content: 'A\n' })
+    await call('sandbox-file-write', { 'worker-name': worker, path: `${dir}/b.txt`, content: 'B\n' })
     const ported = await call('sandbox-port', {
       'worker-name': worker, org: E2E_ORG, repo: E2E_REPO, path: dir, message: 'e2e: port dir',
     })

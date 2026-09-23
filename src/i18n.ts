@@ -143,6 +143,14 @@ export const CATALOG = {
     en: '... {path}: {count} entries omitted (limit {limit})',
     zh: '... {path}：省略 {count} 个条目（上限 {limit}）',
   },
+  deletedPath: {
+    en: "Deleted '{path}'.",
+    zh: "已删除 '{path}'。",
+  },
+  deleteFailed: {
+    en: "Failed to delete '{path}'.",
+    zh: "删除 '{path}' 失败。",
+  },
 
   // ---- sandbox lifecycle (workspace gateway) ----
   sandboxCreated: {

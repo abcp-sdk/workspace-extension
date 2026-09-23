@@ -58,7 +58,7 @@ maybe('live e2e: sandbox auto-checkout + fan-out', () => {
     await call('repo-create-org', { org })
     await call('repo-create-repo', { org, repo, 'auto-init': true })
     await call('repo-branch-create', { org, repo, name: branch, from: 'main' })
-    await call('repo-write', { org, repo, ref: branch, path: 'hello.txt', content: 'v1\n' })
+    await call('repo-file-write', { org, repo, ref: branch, path: 'hello.txt', content: 'v1\n' })
     await call('repo-commit', { org, repo, ref: branch, message: 'seed hello' })
 
     // Create a sandbox: the extension must auto-checkout the branch.
@@ -68,14 +68,14 @@ maybe('live e2e: sandbox auto-checkout + fan-out', () => {
     expect(created.content).toContain(`${org}/${repo}@${branch}`)
 
     // The checked-out file must be present in the sandbox.
-    const ls = await call('sandbox-ls', { 'worker-name': name, path: '.' })
+    const ls = await call('sandbox-file-ls', { 'worker-name': name, path: '.' })
     expect(ls.content).toContain('hello.txt')
 
     // Fan-out: change the file on the branch and confirm it reaches the sandbox.
-    await call('repo-write', { org, repo, ref: branch, path: 'hello.txt', content: 'v2\n' })
+    await call('repo-file-write', { org, repo, ref: branch, path: 'hello.txt', content: 'v2\n' })
     await call('repo-commit', { org, repo, ref: branch, message: 'update hello' })
     await new Promise(r => setTimeout(r, 1500))
-    const read = await call('sandbox-read', { 'worker-name': name, path: 'hello.txt' })
+    const read = await call('sandbox-file-read', { 'worker-name': name, path: 'hello.txt' })
     expect(read.content).toContain('v2')
 
     await call('sandbox-delete', { 'worker-name': name })

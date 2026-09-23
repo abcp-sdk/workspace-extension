@@ -15,12 +15,27 @@ export type LineRange = [number, number]
 export interface FileReadState {
   /** Display path (for messages). */
   path: string
-  /** sha256 (hex) of the file bytes at the time it was last seen. */
+  /**
+   * sha256 (hex) of the bytes at the time it was last seen. When `winStart`
+   * is set this is the hash of the FETCHED WINDOW (not the whole file);
+   * otherwise (legacy records and whole-file reads) of the whole file.
+   */
   sha256: string
   /** Merged, sorted, non-overlapping 1-based inclusive ranges that were seen. */
   ranges: LineRange[]
   /** Epoch millis of the last update (diagnostics). */
   updatedAt: number
+  /**
+   * Windowed-read metadata (0-based, end-exclusive): the sha256 covers lines
+   * [winStart, winEnd) fetched from the worker. `edit` re-fetches the SAME
+   * window and compares hashes — as sound as a whole-file hash for
+   * line-numbered editing: any line-count change shifts the window content
+   * (hash differs), and content changes inside the window differ too.
+   */
+  winStart?: number
+  winEnd?: number
+  /** Total lines at read time (diagnostics; staleness is hash-based). */
+  totalLines?: number
 }
 
 /** A session's seen-file map: pathHash -> FileReadState. */
@@ -70,13 +85,14 @@ export function formatRanges(ranges: LineRange[]): string {
     .join(', ')
 }
 
-/** Record that lines `[s, e]` of `path` were seen, with the file's hash. */
+/** Record that lines `[s, e]` of `path` were seen, with the hash. */
 export function recordSeen(
   state: SessionEditState,
   path: string,
   sha256: string,
   ranges: LineRange[],
   now: number,
+  win?: { start: number; end: number; totalLines: number },
 ): SessionEditState {
   const key = pathHash(path)
   const prev = state[key]
@@ -84,7 +100,15 @@ export function recordSeen(
   for (const [s, e] of ranges) merged = mergeRanges(merged, s, e)
   return {
     ...state,
-    [key]: { path, sha256, ranges: merged, updatedAt: now },
+    [key]: {
+      path,
+      sha256,
+      ranges: merged,
+      updatedAt: now,
+      ...(win !== undefined
+        ? { winStart: win.start, winEnd: win.end, totalLines: win.totalLines }
+        : {}),
+    },
   }
 }
 

@@ -55,8 +55,8 @@ const EXPECTED_TOOLS = [
   'sandbox-status',
   // sandbox execution (easyworker)
   'sandbox-checkout',
-  'sandbox-download',
-  'sandbox-edit',
+  'sandbox-file-download',
+  'sandbox-file-edit',
   'sandbox-exec',
   'sandbox-info',
   'sandbox-job-kill',
@@ -65,11 +65,12 @@ const EXPECTED_TOOLS = [
   'sandbox-job-stdin',
   'sandbox-job-start',
   'sandbox-job-wait',
-  'sandbox-ls',
+  'sandbox-file-ls',
   'sandbox-port',
-  'sandbox-read',
-  'sandbox-upload',
-  'sandbox-write',
+  'sandbox-file-read',
+  'sandbox-file-rm',
+  'sandbox-file-upload',
+  'sandbox-file-write',
   // repo-*
   'repo-branch-create',
   'repo-branch-sync',
@@ -84,13 +85,13 @@ const EXPECTED_TOOLS = [
   'repo-commit',
   'repo-create-org',
   'repo-create-repo',
-  'repo-delete',
+  'repo-file-delete',
   'repo-diff',
-  'repo-edit',
+  'repo-file-edit',
   'repo-delete-push-mirror',
   'repo-explore',
   'repo-import',
-  'repo-list',
+  'repo-file-list',
   'repo-list-push-mirrors',
   'repo-log',
   'repo-mail-send',
@@ -98,14 +99,14 @@ const EXPECTED_TOOLS = [
   'repo-mr-create',
   'repo-mr-list',
   'repo-mr-merge',
-  'repo-read',
+  'repo-file-read',
   'repo-remove',
-  'repo-restore',
+  'repo-file-restore',
   'repo-set-push-mirror',
   'repo-show',
   'repo-tag-create',
   'repo-tags',
-  'repo-write',
+  'repo-file-write',
 ].sort()
 
 describe('workspace extension registration', () => {
@@ -180,7 +181,7 @@ describe('workspace extension registration', () => {
 
     // Execution tools carry a required worker-name; lifecycle tools do not.
     const byName = new Map((manifest?.tools ?? []).map(t => [t.name, t]))
-    for (const exec of ['sandbox-exec', 'sandbox-read', 'sandbox-checkout', 'sandbox-port']) {
+    for (const exec of ['sandbox-exec', 'sandbox-file-read', 'sandbox-checkout', 'sandbox-port']) {
       expect(byName.get(exec)?.input_schema?.required, exec).toContain('worker-name')
     }
     for (const life of ['sandbox-create', 'sandbox-list']) {

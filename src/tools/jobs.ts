@@ -13,8 +13,12 @@ export interface JobCtx {
 
 const RUNNING = 'running'
 
-/** Slice a long wait into ≤60s worker calls, honoring the abort signal. */
-const SLICE_MS = 60_000
+/**
+ * Slice ceiling for a long wait. The worker's JobWait now BLOCKS (no poll
+ * loop) and caps at WORKER_WAIT_MAX (default 600s), so a ≤600s budget is a
+ * SINGLE call; slicing only kicks in beyond the worker's cap.
+ */
+const SLICE_MS = 600_000
 
 function clampInt(v: number | undefined, def: number, max: number): number {
   if (v === undefined) return def
@@ -42,7 +46,9 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
-/** Poll JobWait in ≤60s slices until state leaves running or the budget ends. */
+/** Wait for a job in ≤600s slices until state leaves running or the budget
+ *  ends. The worker BLOCKS server-side up to timeoutMs (or its WORKER_WAIT_MAX
+ *  cap), so the common ≤600s budget completes in ONE call with zero polling. */
 async function waitForJob(
   client: WorkerClient,
   jobId: string,
@@ -52,8 +58,7 @@ async function waitForJob(
   const deadline = Date.now() + Math.max(0, budgetMs)
   for (;;) {
     const remaining = deadline - Date.now()
-    // Floor at 1ms: the worker clamps timeoutMs<=0 to its own 60s cap, so a
-    // zero slice would block far past our deadline.
+    // Floor at 1ms so a zero slice never blocks past our deadline.
     const slice = Math.max(1, Math.min(SLICE_MS, remaining))
     const res = await client.jobWait(
       { jobId, timeoutMs: slice },
@@ -61,8 +66,8 @@ async function waitForJob(
     )
     if (res.state !== RUNNING) return { state: res.state, exitCode: res.exitCode }
     if (Date.now() >= deadline) return { state: res.state, exitCode: res.exitCode }
-    // Guard against a worker that returns immediately without advancing time.
-    await sleep(Math.min(100, Math.max(0, deadline - Date.now())), signal)
+    // The worker's cap is below our remaining budget: retry immediately.
+    await sleep(100, signal)
   }
 }
 
@@ -117,7 +122,8 @@ export async function execCommand(
   }
 }
 
-/** `job-start`: fire-and-forget; returns the job id only. */
+/** `job-start`: fire-and-forget; returns the job id only. No wall-clock
+ *  deadline is armed — a long job is stopped explicitly with `job-kill`. */
 export async function jobStart(
   ctx: JobCtx,
   args: Record<string, unknown>,

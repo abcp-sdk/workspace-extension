@@ -40,7 +40,7 @@ export async function repoBranchSync(
   }
 }
 
-/** `repo-restore`: restore ONE file on a branch to its content at another ref
+/** `repo-file-restore`: restore ONE file on a branch to its content at another ref
  * (or commit). Text uses the normal path; BINARY is written byte-exact so a
  * non-UTF-8 file is not corrupted. This is the recovery tool for a conflict. */
 export async function repoRestore(
