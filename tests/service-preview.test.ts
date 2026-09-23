@@ -57,6 +57,20 @@ describe('service-preview', () => {
     await expect(servicePreview(c, {})).rejects.toThrow(/image/)
     expect(previews).toHaveLength(0)
   })
+
+  it('forwards volumes as VolumeMountSpec', async () => {
+    const { c, previews } = serviceCtx()
+    await servicePreview(c, {
+      image: 'reg/x:1',
+      volumes: [
+        { pvc: 'data', 'mount-path': '/data', 'read-only': true, 'sub-path': 'sub' },
+        { pvc: 'skip' }, // no mount-path -> dropped
+      ],
+    })
+    expect(previews[0]).toMatchObject({
+      volumes: [{ pvc: 'data', mountPath: '/data', readOnly: true, subPath: 'sub' }],
+    })
+  })
 })
 
 describe('service-logs', () => {

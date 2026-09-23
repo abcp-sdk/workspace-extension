@@ -30,6 +30,7 @@ export async function serviceDeploy(
   const command = args['command']
   const commandList = Array.isArray(command) ? command.filter((c): c is string => typeof c === 'string') : []
   const services = parseServices(args['services'])
+  const volumes = parseVolumes(args['volumes'])
   try {
     const res = await ctx.workspace.deployService(
       {
@@ -45,6 +46,7 @@ export async function serviceDeploy(
         kvm: args['kvm'] === true,
         gpuCount: Math.trunc(numArg(args, 'gpu-count') ?? 0),
         services,
+        volumes,
       },
       { headers: { 'X-Session-Name': ctx.session } },
     )
@@ -71,6 +73,28 @@ export async function serviceDeploy(
   } catch (e) {
     throw new TypedToolError('internal', tr(ctx.locale, 'serviceDeployFailed', { err: String(e) }))
   }
+}
+
+/** Parse the `volumes` array into the gateway VolumeMountSpec shape. */
+function parseVolumes(
+  raw: unknown,
+): Array<{ pvc: string; mountPath: string; readOnly: boolean; subPath: string }> {
+  if (!Array.isArray(raw)) return []
+  const out: Array<{ pvc: string; mountPath: string; readOnly: boolean; subPath: string }> = []
+  for (const item of raw) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) continue
+    const o = item as Record<string, unknown>
+    const pvc = typeof o['pvc'] === 'string' ? o['pvc'] : ''
+    const mountPath = typeof o['mount-path'] === 'string' ? o['mount-path'] : typeof o['mountPath'] === 'string' ? o['mountPath'] : ''
+    if (pvc === '' || mountPath === '') continue
+    out.push({
+      pvc,
+      mountPath,
+      readOnly: o['read-only'] === true || o['readOnly'] === true,
+      subPath: typeof o['sub-path'] === 'string' ? o['sub-path'] : typeof o['subPath'] === 'string' ? o['subPath'] : '',
+    })
+  }
+  return out
 }
 
 /** Parse the `services` port array into the gateway shape. */
@@ -144,6 +168,7 @@ export async function servicePreview(
   const command = args['command']
   const commandList = Array.isArray(command) ? command.filter((c): c is string => typeof c === 'string') : []
   const services = parseServices(args['services'])
+  const volumes = parseVolumes(args['volumes'])
   try {
     const res = await ctx.workspace.previewService(
       {
@@ -158,6 +183,7 @@ export async function servicePreview(
         gpuCount: Math.trunc(numArg(args, 'gpu-count') ?? 0),
         services,
         ttlSeconds: Math.trunc(numArg(args, 'ttl-seconds') ?? 0),
+        volumes,
       },
       { headers: { 'X-Session-Name': ctx.session } },
     )

@@ -107,6 +107,12 @@ import {
   servicePreview,
   type ServiceCtx,
 } from './tools/services.js'
+import {
+  pvcCreate,
+  pvcDelete,
+  pvcList,
+  type PVCContext,
+} from './tools/pvc.js'
 
 export const EXT_ID = 'workspace'
 export const EXT_VERSION = '0.14.1'
@@ -377,6 +383,17 @@ export function createWorkspaceConfig(
       return fn({ workspace: managerFor(s, t, locale), session: s, locale }, args ?? {})
     }
 
+  /** Wrap a pvc (workspace gateway storage) tool. */
+  const pvcWrap = (
+    fn: (ctx: PVCContext, args: Record<string, unknown>) => Promise<ToolResultData>,
+  ): ToolSpec['execute'] =>
+    async (args, _callId, sessionName, _signal, tenant) => {
+      const t = tenant ?? ''
+      const s = sessionName ?? ''
+      const locale = await localeOf(deps, t, s)
+      return fn({ workspace: managerFor(s, t, locale), locale }, args ?? {})
+    }
+
   /** Wrap a bridge (repo + worker) tool. */
   const bridgeWrap = (
     fn: (ctx: BridgeCtx, args: Record<string, unknown>) => Promise<ToolResultData>,
@@ -447,6 +464,9 @@ export function createWorkspaceConfig(
     'service-list': serviceWrap(serviceList),
     'service-delete': serviceWrap(serviceDelete),
     'service-logs': serviceWrap(serviceLogs),
+    'pvc-create': pvcWrap(pvcCreate),
+    'pvc-list': pvcWrap(pvcList),
+    'pvc-delete': pvcWrap(pvcDelete),
     'repo-file-read': repoWrap(repoRead),
     'repo-file-write': repoWrap(repoWrite),
     'repo-file-edit': repoWrap(repoEdit),
@@ -600,6 +620,27 @@ const bool = (description: string, descriptionsZh?: string): Record<string, unkn
 })
 
 const JOB_ID = str('Background job id.', '后台任务 id。')
+
+/** The `volumes` array shared by service-deploy / service-preview: mount
+ *  named PVCs (from pvc-create) into the container. */
+const volumesSchema = (): Record<string, unknown> => ({
+  type: 'array',
+  description:
+    'PVCs to mount (from pvc-create). Each: { pvc, mount-path, read-only?, sub-path? }. The claim must exist and belong to this tenant.',
+  descriptions: {
+    zh: '要挂载的 PVC（来自 pvc-create）。每项：{ pvc, mount-path, read-only?, sub-path? }。该 PVC 必须存在且属于本租户。',
+  },
+  items: {
+    type: 'object',
+    properties: {
+      pvc: str('PVC name (see pvc-list).', 'PVC 名称（见 pvc-list）。'),
+      'mount-path': str('Absolute path inside the container.', '容器内的绝对路径。'),
+      'read-only': bool('Mount read-only (default false).', '只读挂载（默认 false）。'),
+      'sub-path': str('Sub-path within the volume (optional).', '卷内的子路径（可选）。'),
+    },
+    required: ['pvc', 'mount-path'],
+  },
+})
 
 /**
  * Appended to every command-running tool (`sandbox-exec` / `sandbox-job-start`)
@@ -1098,6 +1139,7 @@ const TOOL_META: Record<string, ToolMeta> = {
         },
         kvm: { type: 'boolean', description: 'Request KVM (/dev/kvm) — non-privileged, via the device plugin.', descriptions: { zh: '请求 KVM（/dev/kvm）——非特权，经 device plugin。' } },
         'gpu-count': int('Number of NVIDIA GPUs to request (0 = none; needs the GPU device plugin).', '请求的 NVIDIA GPU 卡数（0 = 无；需 GPU device plugin）。'),
+        volumes: volumesSchema(),
       },
       [],
     ),
@@ -1138,6 +1180,7 @@ const TOOL_META: Record<string, ToolMeta> = {
         'ttl-seconds': int('TTL before reclamation (0 = deployment default).', '回收前的 TTL（0 = 部署默认）。'),
         kvm: { type: 'boolean', description: 'Request KVM (/dev/kvm) — non-privileged.', descriptions: { zh: '请求 KVM（/dev/kvm）——非特权。' } },
         'gpu-count': int('Number of NVIDIA GPUs to request (0 = none).', '请求的 NVIDIA GPU 卡数（0 = 无）。'),
+        volumes: volumesSchema(),
       },
       ['image'],
     ),
@@ -1158,6 +1201,34 @@ const TOOL_META: Record<string, ToolMeta> = {
         'tail-lines': int('Number of trailing lines (0 = deployment default).', '末尾行数（0 = 部署默认）。'),
         previous: { type: 'boolean', description: 'Read the previous container instance (the crash).', descriptions: { zh: '读取上一个容器实例（崩溃那次）。' } },
       },
+      ['name'],
+    ),
+    required: SANDBOX_REQUIRED,
+  },
+  'pvc-create': {
+    description: 'Create a named, tenant-owned PersistentVolumeClaim (admin) for service data. Services mount it by name via service-deploy/service-preview `volumes`. Uses the deployment storage class (self-hosted local-path -> /home/develop/PVC on the host). NOTE: local-path does not enforce `size`; a fresh PVC stays Pending until a service mounts it.',
+    descriptions: { zh: '创建命名、归属本租户的 PersistentVolumeClaim（管理员），用于服务数据。服务通过 service-deploy/service-preview 的 `volumes` 按名挂载。使用部署存储类（自建 local-path → 宿主机 /home/develop/PVC）。注意：local-path 不强制 `size`；新建的 PVC 在有服务挂载前保持 Pending。' },
+    inputSchema: obj(
+      {
+        name: str('PVC name (a DNS-1123 label).', 'PVC 名称（DNS-1123 label）。'),
+        size: str('Requested size, e.g. 1Gi (default 1Gi). Not enforced by local-path.', '请求容量，如 1Gi（默认 1Gi）。local-path 不强制。'),
+        'storage-class': str('StorageClass (default the deployment class; only that value is accepted).', '存储类（默认为部署配置的类；仅接受该值）。'),
+      },
+      ['name'],
+    ),
+    required: SANDBOX_REQUIRED,
+  },
+  'pvc-list': {
+    description: 'List the tenant\'s PVCs (name, phase, size, storage class, and which services mount each).',
+    descriptions: { zh: '列出本租户的 PVC（名称、状态、容量、存储类，以及哪些服务正在挂载）。' },
+    inputSchema: obj({}),
+    required: SANDBOX_REQUIRED,
+  },
+  'pvc-delete': {
+    description: 'Delete a PVC (admin). REFUSED while any service still mounts it. Deletion is destructive: local-path removes the on-disk directory (reclaim policy Delete).',
+    descriptions: { zh: '删除 PVC（管理员）。若有服务仍在挂载则拒绝。删除是破坏性的：local-path 会删除磁盘目录（回收策略 Delete）。' },
+    inputSchema: obj(
+      { name: str('PVC name.', 'PVC 名称。') },
       ['name'],
     ),
     required: SANDBOX_REQUIRED,

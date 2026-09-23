@@ -205,6 +205,34 @@ export const CATALOG = {
     en: "No log output for '{name}'.",
     zh: "'{name}' 暂无日志输出。",
   },
+  pvcCreated: {
+    en: "Created PVC '{name}' ({size}, class {class}).",
+    zh: "已创建 PVC '{name}'（{size}，存储类 {class}）。",
+  },
+  pvcCreateFailed: {
+    en: "pvc-create failed for '{name}': {err}",
+    zh: "pvc-create 失败（'{name}'）：{err}",
+  },
+  pvcNone: {
+    en: 'No PVCs.',
+    zh: '没有 PVC。',
+  },
+  pvcListHeader: {
+    en: 'PVCs ({count}):',
+    zh: 'PVC（{count} 个）：',
+  },
+  pvcListFailed: {
+    en: 'pvc-list failed: {err}',
+    zh: 'pvc-list 失败：{err}',
+  },
+  pvcDeleted: {
+    en: "Deleted PVC '{name}'.",
+    zh: "已删除 PVC '{name}'。",
+  },
+  pvcDeleteFailed: {
+    en: "pvc-delete failed for '{name}': {err}",
+    zh: "pvc-delete 失败（'{name}'）：{err}",
+  },
   serviceLogsFailed: {
     en: "service-logs failed for '{name}': {err}",
     zh: "读取 '{name}' 日志失败：{err}",
