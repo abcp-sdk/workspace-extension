@@ -682,12 +682,12 @@ const TOOL_META: Record<string, ToolMeta> = {
   // ================= sandbox lifecycle (workspace gateway) =================
   'sandbox-create': {
     description:
-      'Create a sandbox from ANY base image and wait up to 60s for it to become healthy. The gateway derives a runnable sandbox by injecting the easyworker binary into the base image at launch time, so any image works (see list-oci-images for available images). `image` is a full image ref; omit it for the deployment default base. Returns the sandbox name, its in-cluster service DNS, and the worker environment (OS/arch, workspace root, boot id).',
-    descriptions: { zh: '用任意基础镜像创建沙箱，最多等待 60 秒就绪。网关会在启动时把 easyworker 二进制注入基础镜像，因此任意镜像都可用（可用 list-oci-images 查看现有镜像）。`image` 是完整镜像引用；省略则用部署默认基础镜像。返回沙箱名、集群内服务域名，以及 worker 环境（OS/架构、工作区根目录、boot id）。' },
+      'Create a sandbox and wait up to 60s for it to become healthy. A sandbox runs a PRE-BUILT image that already bundles the worker — the gateway no longer injects anything. `image` must be one of the deployment sandbox images from the dedicated sandbox org (see list-oci-images with owner="sandbox"); omit it for the deployment default. Returns the sandbox name, its in-cluster service DNS, and the worker environment (OS/arch, workspace root, boot id).',
+    descriptions: { zh: '创建沙箱并最多等待 60 秒就绪。沙箱运行的是预构建、已内置 worker 的镜像——网关不再做任何注入。`image` 必须是部署沙箱镜像（见 list-oci-images，owner="sandbox"）之一；省略则用部署默认镜像。返回沙箱名、集群内服务域名，以及 worker 环境（OS/架构、工作区根目录、boot id）。' },
     inputSchema: obj(
       {
         name: str('Logical sandbox name (unique among live sandboxes).', '逻辑沙箱名（在存活沙箱中唯一）。'),
-        image: str('Full base image ref (see list-oci-images; omit for the deployment default).', '完整基础镜像引用（见 list-oci-images；省略则用部署默认）。'),
+        image: str('Sandbox image from the sandbox org (see list-oci-images; omit for the deployment default).', '沙箱组织下的沙箱镜像（见 list-oci-images；省略则用部署默认）。'),
         cpu: str('CPU request/limit, e.g. 500m or 1 (default 500m).', 'CPU 请求/上限，如 500m 或 1（默认 500m）。'),
         memory: str('Memory request/limit, e.g. 1Gi (default 1Gi).', '内存请求/上限，如 1Gi（默认 1Gi）。'),
         kvm: { type: 'boolean', description: 'Request KVM (/dev/kvm) — non-privileged, via the device plugin.', descriptions: { zh: '请求 KVM（/dev/kvm）——非特权，经 device plugin。' } },
@@ -710,8 +710,8 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: SANDBOX_REQUIRED,
   },
   'list-oci-images': {
-    description: 'Browse OCI images in the registry. `owner` selects the namespace (default: the deployment toolchain org). Pass `name` to list ONE image\'s tags; omit it to list all of the owner\'s images. Returns full refs usable with sandbox-create.',
-    descriptions: { zh: '浏览 registry 中的 OCI 镜像。`owner` 选择命名空间（默认：部署的 toolchain 组织）。传 `name` 列出单个镜像的所有 tag；省略则列出该 owner 的全部镜像。返回的完整引用可直接用于 sandbox-create。' },
+    description: 'Browse OCI images in the registry. `owner` selects the namespace (default: the deployment toolchain org; use owner="sandbox" to list the deployable SANDBOX images). Pass `name` to list ONE image\'s tags; omit it to list all of the owner\'s images. Returns full refs; only `sandbox` refs are usable with sandbox-create.',
+    descriptions: { zh: '浏览 registry 中的 OCI 镜像。`owner` 选择命名空间（默认：部署的 toolchain 组织；用 owner="sandbox" 列出可部署的沙箱镜像）。传 `name` 列出单个镜像的所有 tag；省略则列出该 owner 的全部镜像。返回完整引用；只有 `sandbox` 下的引用可用于 sandbox-create。' },
     inputSchema: obj({
       owner: str('Owner (user or org) namespace (default: the deployment toolchain org).', 'owner（用户或组织）命名空间（默认：部署的 toolchain 组织）。'),
       name: str('Image name to list tags for (omit to list all images).', '要列出 tag 的镜像名（省略则列出全部镜像）。'),
