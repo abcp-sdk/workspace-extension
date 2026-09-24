@@ -412,8 +412,8 @@ export const CATALOG = {
     zh: "已暂存删除 {org}/{repo}@{ref} 中的 '{path}'（尚未提交）。",
   },
   repoCommitted: {
-    en: 'Finalized staged changes on {org}/{repo}@{ref} (commit {sha}); a fresh staging area is open.',
-    zh: '已完成 {org}/{repo}@{ref} 上暂存改动的提交（提交 {sha}）；已开启新的暂存区。',
+    en: 'Finalized staged changes on {org}/{repo}@{ref} (commit {sha}).',
+    zh: '已完成 {org}/{repo}@{ref} 上暂存改动的提交（提交 {sha}）。',
   },
   repoNoChanges: {
     en: "No changes to '{path}' in {org}/{repo}@{ref}.",

@@ -947,8 +947,8 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: BRIDGE_REQUIRED,
   },
   'sandbox-port': {
-    description: 'Commit sandbox file(s) back to the repository. A single file is overwritten. A directory is ported as NEW files only: if any target path already exists in the repo, the whole port is refused (no directory overwrite).',
-    descriptions: { zh: '把沙箱文件提交回仓库。单文件会覆盖；目录只作为新文件移植：只要任一目标路径已存在于仓库，整个移植被拒绝（目录不覆盖）。' },
+    description: 'Stage sandbox file(s) back to the repository (into the branch\'s staging commit; finalize with repo-commit). A single file is overwritten. A directory is ported as NEW files only: if any target path already exists in the repo, the whole port is refused (no directory overwrite).',
+    descriptions: { zh: '把沙箱文件暂存回仓库（进入分支的暂存提交；再用 repo-commit 最终提交）。单文件会覆盖；目录只作为新文件移植：只要任一目标路径已存在于仓库，整个移植被拒绝（目录不覆盖）。' },
     inputSchema: obj(
       {
         ...REPO_ADDR,
@@ -1248,8 +1248,8 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: REPO_REQUIRED,
   },
   'repo-file-write': {
-    description: 'Create or overwrite a file in the repository as ONE commit. Uses the current blob sha for optimistic locking.',
-    descriptions: { zh: '在仓库中创建或覆盖文件，作为一次提交。使用当前 blob sha 做乐观锁。' },
+    description: 'Create or overwrite a file in the repository. The change is STAGED into the branch\'s staging commit (amending the open one, else opening a new one); finalize with repo-commit before opening a change request. Uses the current blob sha for optimistic locking.',
+    descriptions: { zh: '在仓库中创建或覆盖文件。改动会暂存进分支的暂存提交（已有则 amend，否则新建），在创建合并请求前用 repo-commit 最终提交。使用当前 blob sha 做乐观锁。' },
     inputSchema: obj(
       {
         ...REPO_ADDR,
@@ -1262,8 +1262,8 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: REPO_REQUIRED,
   },
   'repo-file-edit': {
-    description: 'Edit a repository file by line numbers (1-based) as ONE commit. end-line < start-line inserts; otherwise replaces [start-line, end-line]. Requires a prior repo-file-read of the file, only the seen lines may change, and the file must be unchanged since (blob sha). Returns a summary + unified diff.',
-    descriptions: { zh: '按行号（从 1 开始）编辑仓库文件，作为一次提交。end-line < start-line 插入；否则替换 [start-line, end-line]。必须先 repo-file-read 过该文件，只能改已“看到”的行，且文件自读取后未变化（blob sha）。返回摘要 + unified diff。' },
+    description: 'Edit a repository file by line numbers (1-based). The change is STAGED into the branch\'s staging commit (amending the open one, else opening a new one); finalize with repo-commit. end-line < start-line inserts; otherwise replaces [start-line, end-line]. Requires a prior repo-file-read of the file, only the seen lines may change, and the file must be unchanged since (blob sha). Returns a summary + unified diff.',
+    descriptions: { zh: '按行号（从 1 开始）编辑仓库文件。改动会暂存进分支的暂存提交（已有则 amend，否则新建），再用 repo-commit 最终提交。end-line < start-line 插入；否则替换 [start-line, end-line]。必须先 repo-file-read 过该文件，只能改已“看到”的行，且文件自读取后未变化（blob sha）。返回摘要 + unified diff。' },
     inputSchema: obj(
       {
         ...REPO_ADDR,
@@ -1278,8 +1278,8 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: REPO_REQUIRED,
   },
   'repo-file-delete': {
-    description: 'Delete a file from the repository as ONE commit. Uses the current blob sha for optimistic locking.',
-    descriptions: { zh: '从仓库删除文件，作为一次提交。使用当前 blob sha 做乐观锁。' },
+    description: 'Delete a file from the repository. The change is STAGED into the branch\'s staging commit (amending the open one, else opening a new one); finalize with repo-commit. Uses the current blob sha for optimistic locking.',
+    descriptions: { zh: '从仓库删除文件。改动会暂存进分支的暂存提交（已有则 amend，否则新建），再用 repo-commit 最终提交。使用当前 blob sha 做乐观锁。' },
     inputSchema: obj(
       {
         ...REPO_ADDR,
@@ -1303,8 +1303,8 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: REPO_REQUIRED,
   },
   'repo-commit': {
-    description: 'Finalize the branch\'s staged changes under `message` and open a fresh staging area. repo-file-write/repo-file-edit/repo-file-delete accumulate into one staging commit; this names that commit. Required before opening or merging a change request.',
-    descriptions: { zh: '用 `message` finalize 分支上已暂存的改动，并开启新的暂存区。repo-file-write/repo-file-edit/repo-file-delete 会累积进同一个暂存提交；本工具为该提交命名。在创建或合并合并请求之前必须执行。' },
+    description: 'Finalize the branch\'s staged changes under `message`, CLOSING the staging area. repo-file-write/repo-file-edit/repo-file-delete accumulate into one staging commit; this names that commit. The next write opens a fresh staging commit. Required before opening or merging a change request (refused when nothing is staged).',
+    descriptions: { zh: '用 `message` finalize 分支上已暂存的改动，并关闭暂存区。repo-file-write/repo-file-edit/repo-file-delete 会累积进同一个暂存提交；本工具为该提交命名；下次写入会重新开一个暂存提交。在创建或合并合并请求之前必须执行（无暂存改动时拒绝）。' },
     inputSchema: obj(
       {
         ...REPO_ADDR,
@@ -1469,8 +1469,8 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: REPO_REQUIRED,
   },
   'repo-file-restore': {
-    description: 'Restore ONE file on a branch to its exact content at another ref or commit (binary-safe). Use it to recover a file version during conflict resolution.',
-    descriptions: { zh: '把分支上的某个文件恢复为另一 ref 或提交时的确切内容（二进制安全）。用于解决冲突时找回文件版本。' },
+    description: 'Restore ONE file on a branch to its exact content at another ref or commit (binary-safe), STAGED into the branch\'s staging commit (finalize with repo-commit). Use it to recover a file version during conflict resolution.',
+    descriptions: { zh: '把分支上的某个文件恢复为另一 ref 或提交时的确切内容（二进制安全），改动暂存进分支的暂存提交（再用 repo-commit 最终提交）。用于解决冲突时找回文件版本。' },
     inputSchema: obj(
       {
         ...REPO_ADDR,
