@@ -1360,8 +1360,8 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: REPO_REQUIRED,
   },
   'repo-branch-create': {
-    description: 'Create a branch from a ref (default: the repository default branch).',
-    descriptions: { zh: '从某个 ref 创建分支（默认：仓库默认分支）。' },
+    description: 'Create a branch from a ref (default: the repository default branch). MAINTAINER ONLY (main-branch session): a feature-branch session is bound to exactly one branch and cannot create more.',
+    descriptions: { zh: '从某个 ref 创建分支（默认：仓库默认分支）。仅限维护者（main 分支会话）：功能分支会话绑定到唯一分支，不能创建更多分支。' },
     inputSchema: obj(
       {
         ...REPO_ADDR,
