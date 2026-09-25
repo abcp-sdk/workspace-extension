@@ -228,7 +228,9 @@ export async function jobStdin(
 /** `job-list`: list jobs registered in the worker. */
 export async function jobList(ctx: JobCtx): Promise<ToolResultData> {
   const res = await ctx.client.listJobs({})
-  if (res.jobs.length === 0) return { content: tr(ctx.locale ?? 'en', 'noJobs') }
+  if (res.jobs.length === 0) {
+    return { content: tr(ctx.locale ?? 'en', 'noJobs'), data: { count: 0, jobs: [] } }
+  }
   const lines = res.jobs.map(
     j =>
       `${j.id}  ${j.state}${j.exitCode ? ` (exit ${j.exitCode})` : ''}  ${j.command}`,
@@ -236,5 +238,18 @@ export async function jobList(ctx: JobCtx): Promise<ToolResultData> {
   const capped = capLines(lines)
   let content = capped.kept.join('\n')
   if (capped.truncated) content += truncationNote(capped, capped.kept.length, lines.length, ctx.locale)
-  return { content, data: { count: res.jobs.length } }
+  // Structured rows so the client can render a proper LIST (id / state / exit /
+  // command) instead of a terminal transcript.
+  return {
+    content,
+    data: {
+      count: res.jobs.length,
+      jobs: res.jobs.map(j => ({
+        id: j.id,
+        state: j.state,
+        exit_code: j.exitCode,
+        command: j.command,
+      })),
+    },
+  }
 }

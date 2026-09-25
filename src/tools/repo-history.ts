@@ -94,7 +94,20 @@ export async function repoShow(
   const capped = capLines(patch.split('\n'))
   let body = capped.kept.join('\n')
   if (capped.truncated) body += truncationNote(capped, capped.kept.length, patch.split('\n').length, ctx.locale)
-  return { content: `${header}\n\n${body}`, data: { org: r.org, repo: r.repo, ref: r.ref, sha: commit.sha, commit } }
+  // Structured payload so the client renders the patch as a proper DIFF (with
+  // the commit message as a field) instead of a terminal transcript.
+  return {
+    content: `${header}\n\n${body}`,
+    data: {
+      org: r.org,
+      repo: r.repo,
+      ref: r.ref,
+      sha: commit.sha,
+      commit,
+      message: commit.message,
+      diff: capped.kept.join('\n'),
+    },
+  }
 }
 
 /** `repo-diff`: compare two refs. */
