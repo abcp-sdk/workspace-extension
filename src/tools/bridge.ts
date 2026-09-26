@@ -4,6 +4,8 @@ import type { WorkerClient } from '../client.js'
 import type { Forgejo, CommitFile } from '../forgejo.js'
 import { tr } from '../i18n.js'
 import { strArg } from './shared.js'
+import { unifiedDiff } from './diff.js'
+import { capLines, truncationNote } from './output.js'
 
 /** Context for the repo↔sandbox bridge tools. */
 export interface BridgeCtx {
@@ -163,6 +165,19 @@ export async function sandboxPort(
     }
   }
 
+  // Pre-image for the diff (best-effort): a single-file port OVERWRITES the
+  // target, so diff against its current text; a directory port only creates
+  // NEW files, so diff against empty.
+  const before = new Map<string, string>()
+  if (!stat.isDir) {
+    try {
+      const cur = await ctx.forgejo.getContents(r.org, r.repo, repoPath, r.ref, ctx.locale)
+      if (cur.kind === 'file') before.set(repoPath, cur.text)
+    } catch {
+      // absent -> new file
+    }
+  }
+
   const commitFiles: CommitFile[] = files.map(f => ({
     path: f.path,
     operation: stat.isDir ? 'create' : 'update',
@@ -175,11 +190,29 @@ export async function sandboxPort(
   })
   const fanned = ctx.fanout !== undefined ? await ctx.fanout(r.org, r.repo, r.ref, res.sha) : 0
   const note = fanned > 0 ? `\n${tr(ctx.locale, 'fanoutUpdated', { count: fanned })}` : ''
+
+  // Unified diff over the ported TEXT files (binary files are listed but not
+  // diffed). Mirrors repo-file-write/edit so the card renders a diff body.
+  let added = 0
+  let removed = 0
+  const chunks: string[] = []
+  for (const f of files) {
+    if (f.content === undefined) continue // binary: no textual diff
+    const d = unifiedDiff(before.get(f.path) ?? '', f.content, f.path)
+    if (d.text === '') continue
+    added += d.added
+    removed += d.removed
+    chunks.push(d.text)
+  }
+  const diffText = chunks.join('\n')
+  const summary = tr(ctx.locale, 'portDone', {
+    count: files.length, org: r.org, repo: r.repo, ref: r.ref || 'HEAD', sha: short(res.sha),
+  })
+  const capped = capLines(diffText.split('\n'))
+  const body = capped.kept.join('\n') + (capped.truncated ? truncationNote(capped, capped.kept.length, diffText.split('\n').length, ctx.locale) : '')
   return {
-    content: tr(ctx.locale, 'portDone', {
-      count: files.length, org: r.org, repo: r.repo, ref: r.ref || 'HEAD', sha: short(res.sha),
-    }) + note,
-    data: { org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, count: files.length, paths: files.map(f => f.path), fanned },
+    content: (body === '' ? summary : `${summary}\n\n${body}`) + note,
+    data: { org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, count: files.length, paths: files.map(f => f.path), added, removed, diff: diffText, fanned },
   }
 }
 

@@ -11,13 +11,14 @@ import type { CommitFile, Forgejo } from '../src/forgejo.js'
 
 interface Capture {
   files: CommitFile[]
+  contents: Map<string, string>
 }
 
 function ctxWith(
   sandboxFiles: Record<string, Uint8Array>,
-  opts: { dir?: boolean } = {},
+  opts: { dir?: boolean; existing?: Record<string, string> } = {},
 ): { c: BridgeCtx; cap: Capture } {
-  const cap: Capture = { files: [] }
+  const cap: Capture = { files: [], contents: new Map(Object.entries(opts.existing ?? {})) }
   const c = {
     client: {
       fileList: async ({ path }: { path: string }) => {
@@ -34,9 +35,12 @@ function ctxWith(
       }),
     },
     forgejo: {
-      // getContents is only used for a DIRECTORY port's existence check.
-      getContents: async () => {
-        throw new Error('absent')
+      // getContents: the directory-port existence check AND the single-file
+      // pre-image. Throws for an absent path.
+      getContents: async (_o: string, _r: string, path: string) => {
+        const t = cap.contents.get(path)
+        if (t === undefined) throw new Error('absent')
+        return { kind: 'file', text: t, sha: 's', size: t.length }
       },
       applyFiles: async (_o: string, _r: string, files: CommitFile[]) => {
         cap.files = files
@@ -76,6 +80,24 @@ describe('sandbox-port binary safety', () => {
     const e = await sandboxPort(c, { org: 'acme', repo: 'easyvcs', path: 'easyvcs/store/store.go' }).catch(e => e)
     expect((e as { code?: string }).code).toBe('invalid_argument')
     expect(String(e)).toContain('repo-path')
+  })
+
+  it('renders a unified diff of a single-file port against the current repo text', async () => {
+    const next = new TextEncoder().encode('a\nB\nc\n')
+    const { c } = ctxWith({ 'src/a.txt': next }, { existing: { 'src/a.txt': 'a\nb\nc\n' } })
+    const r = await sandboxPort(c, { org: 'acme', repo: 'web', path: 'src/a.txt', 'repo-path': 'src/a.txt' })
+    expect(r.data).toMatchObject({ added: 1, removed: 1 })
+    expect(String((r.data as Record<string, unknown>).diff)).toContain('--- a/src/a.txt')
+    expect(String((r.data as Record<string, unknown>).diff)).toContain('-b')
+    expect(String((r.data as Record<string, unknown>).diff)).toContain('+B')
+    expect(String(r.content)).toContain('@@')
+  })
+
+  it('diffs a directory port against empty (all new)', async () => {
+    const { c } = ctxWith({ 'dir/a.txt': new TextEncoder().encode('ok\n') })
+    const r = await sandboxPort(c, { org: 'acme', repo: 'web', path: 'dir', 'repo-path': 'out' })
+    expect(r.data).toMatchObject({ added: 1, removed: 0 })
+    expect(String((r.data as Record<string, unknown>).diff)).toContain('+++ b/out/a.txt')
   })
 
   it('keeps text and binary distinct in a directory port', async () => {
