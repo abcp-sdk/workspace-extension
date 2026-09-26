@@ -429,6 +429,9 @@ export async function downloadFile(
       bytes: file.data.length,
       path,
     }),
+    data: {
+      files: [{ code, name: file.name, mime: file.mime, size: file.data.length }],
+    },
   }
 }
 
@@ -453,6 +456,8 @@ export async function uploadFile(
       mime: stored.mime,
       bytes: res.content.length,
     }),
-    data: { code: stored.code, mime: stored.mime },
+    data: {
+      files: [{ code: stored.code, name, mime: stored.mime, size: res.content.length }],
+    },
   }
 }

@@ -30,14 +30,14 @@ function fakeGateway() {
   return { ensured, gateway: gateway as unknown as MailCtx['gateway'] }
 }
 
-function ctx(branches: string[]) {
+function ctx(branches: string[], session = 'acme:web:main') {
   const { ensured, gateway } = fakeGateway()
   const published: Array<{ session: string; type: string; payload: unknown; source: string }> = []
   const c: MailCtx = {
     forgejo: fakeForgejo(branches),
     gateway,
     tenant: 't1',
-    session: 'acme:web:main',
+    session,
     locale: 'en',
     publishMailbox: async (_tenant, sessionName, type, payload, source = '') => {
       published.push({ session: sessionName, type, payload, source })
@@ -56,7 +56,7 @@ describe('repo-mail-send', () => {
     expect(published).toEqual([])
   })
 
-  it('ensures the branch session then delivers to it (explicit branch)', async () => {
+  it('lets a maintainer message any branch of its OWN repo', async () => {
     const { c, ensured, published } = ctx(['main', 'feature/x'])
     const res = await repoMailSend(c, { org: 'acme', repo: 'web', branch: 'feature/x', text: 'do it' })
     expect(ensured).toEqual([{ org: 'acme', repo: 'web', branch: 'feature/x' }])
@@ -66,10 +66,57 @@ describe('repo-mail-send', () => {
     expect(res.data).toMatchObject({ session: 'acme:web:feature/x' })
   })
 
-  it('defaults the branch to main', async () => {
-    const { c, ensured, published } = ctx(['main'])
+  it('lets a developer message its own repo main (default branch)', async () => {
+    const { c, ensured, published } = ctx(['main'], 'acme:web:feature/x')
     await repoMailSend(c, { org: 'acme', repo: 'web', text: 'hello' })
     expect(ensured).toEqual([{ org: 'acme', repo: 'web', branch: 'main' }])
     expect(published[0]?.session).toBe('acme:web:main')
+    expect(published[0]?.source).toBe('session:acme:web:feature/x')
+  })
+
+  it('refuses a developer messaging a non-main branch', async () => {
+    const { c, ensured, published } = ctx(['main', 'feature/y'], 'acme:web:feature/x')
+    await expect(
+      repoMailSend(c, { org: 'acme', repo: 'web', branch: 'feature/y', text: 'hi' }),
+    ).rejects.toThrow(/main/)
+    expect(ensured).toEqual([])
+    expect(published).toEqual([])
+  })
+
+  it('refuses cross-repo messaging to a non-main branch', async () => {
+    const { c, published } = ctx(['main', 'feature/x'])
+    await expect(
+      repoMailSend(c, { org: 'other', repo: 'lib', branch: 'feature/x', text: 'hi' }),
+    ).rejects.toThrow(/cross-repository/)
+    expect(published).toEqual([])
+  })
+
+  it('lets a maintainer message another repo main (peer coordination)', async () => {
+    const { c, ensured, published } = ctx(['main'])
+    await repoMailSend(c, { org: 'other', repo: 'lib', text: 'ping' })
+    expect(ensured).toEqual([{ org: 'other', repo: 'lib', branch: 'main' }])
+    expect(published[0]?.session).toBe('other:lib:main')
+  })
+
+  it('refuses a developer messaging another repo', async () => {
+    const { c, published } = ctx(['main'], 'acme:web:feature/x')
+    await expect(
+      repoMailSend(c, { org: 'other', repo: 'lib', text: 'hi' }),
+    ).rejects.toThrow(/main/)
+    expect(published).toEqual([])
+  })
+
+  it('refuses messaging your own session', async () => {
+    const { c } = ctx(['main'], 'acme:web:main')
+    await expect(
+      repoMailSend(c, { org: 'acme', repo: 'web', branch: 'main', text: 'me' }),
+    ).rejects.toThrow(/your own session/)
+  })
+
+  it('refuses a non-branch session (free session)', async () => {
+    const { c } = ctx(['main'], 'free-session')
+    await expect(
+      repoMailSend(c, { org: 'acme', repo: 'web', text: 'hi' }),
+    ).rejects.toThrow(/branch session/)
   })
 })

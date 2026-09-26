@@ -84,6 +84,17 @@ describe('sandbox-create', () => {
     expect(String(e)).toContain('60s')
   })
 
+  it('maps an already-exists refusal to invalid_argument (not a timeout)', async () => {
+    const mgr = fakeManager({
+      createSandbox: async () => {
+        throw new Error('ConnectError: [already_exists] sandbox "w1" already exists')
+      },
+    })
+    const e = await sandboxCreate(ctx(mgr), { name: 'w1', image: 'img' }).catch(e => e)
+    expect((e as TypedToolError).code).toBe('invalid_argument')
+    expect(String(e)).toContain('already exists')
+  })
+
   it('binds the sandbox to the calling session', async () => {
     let got: Record<string, unknown> = {}
     const mgr = fakeManager({

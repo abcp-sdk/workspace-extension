@@ -168,7 +168,7 @@ maybe('live e2e: workspace repo-* tools against a real Forgejo', () => {
     await call('sandbox-file-write', { 'worker-name': worker, path: `${dir}/a.txt`, content: 'A\n' })
     await call('sandbox-file-write', { 'worker-name': worker, path: `${dir}/b.txt`, content: 'B\n' })
     const ported = await call('sandbox-port', {
-      'worker-name': worker, org: E2E_ORG, repo: E2E_REPO, path: dir, message: 'e2e: port dir',
+      'worker-name': worker, org: E2E_ORG, repo: E2E_REPO, path: dir, 'repo-path': dir, message: 'e2e: port dir',
     })
     expect(Number((ported.data as Record<string, unknown>).count)).toBe(2)
 

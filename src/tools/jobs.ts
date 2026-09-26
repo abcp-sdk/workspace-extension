@@ -225,26 +225,43 @@ export async function jobStdin(
   }
 }
 
-/** `job-list`: list jobs registered in the worker. */
-export async function jobList(ctx: JobCtx): Promise<ToolResultData> {
-  const res = await ctx.client.listJobs({})
+/** `job-list`: list jobs registered in the worker.
+ *
+ * Running jobs come FIRST, then the rest newest-first. `command` is collapsed
+ * to a single truncated line in the TEXT (a heredoc command would otherwise
+ * explode into many physical lines); `data.jobs` keeps the full command for the
+ * pretty card. */
+export async function jobList(
+  ctx: JobCtx,
+  args: Record<string, unknown> = {},
+): Promise<ToolResultData> {
+  const limit = clampInt(numArg(args, 'limit'), 50, 500)
+  const res = await ctx.client.listJobs({ limit })
   if (res.jobs.length === 0) {
     return { content: tr(ctx.locale ?? 'en', 'noJobs'), data: { count: 0, jobs: [] } }
   }
-  const lines = res.jobs.map(
+  // Running first, then newest-first by start time.
+  const jobs = [...res.jobs].sort((a, b) => {
+    const ar = a.state === RUNNING ? 0 : 1
+    const br = b.state === RUNNING ? 0 : 1
+    if (ar !== br) return ar - br
+    return a.startedAt > b.startedAt ? -1 : a.startedAt < b.startedAt ? 1 : 0
+  })
+  const lines = jobs.map(
     j =>
-      `${j.id}  ${j.state}${j.exitCode ? ` (exit ${j.exitCode})` : ''}  ${j.command}`,
+      `${j.id}  ${j.state}${j.exitCode ? ` (exit ${j.exitCode})` : ''}  ${oneLine(j.command)}`,
   )
   const capped = capLines(lines)
   let content = capped.kept.join('\n')
   if (capped.truncated) content += truncationNote(capped, capped.kept.length, lines.length, ctx.locale)
   // Structured rows so the client can render a proper LIST (id / state / exit /
-  // command) instead of a terminal transcript.
+  // command) instead of a terminal transcript. The FULL command is preserved
+  // here (only the text above collapses it).
   return {
     content,
     data: {
-      count: res.jobs.length,
-      jobs: res.jobs.map(j => ({
+      count: jobs.length,
+      jobs: jobs.map(j => ({
         id: j.id,
         state: j.state,
         exit_code: j.exitCode,
@@ -252,4 +269,10 @@ export async function jobList(ctx: JobCtx): Promise<ToolResultData> {
       })),
     },
   }
+}
+
+/** Collapse a (possibly multi-line) command to ONE truncated line for text. */
+function oneLine(command: string, max = 200): string {
+  const flat = command.replace(/\s+/g, ' ').trim()
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
 }

@@ -133,7 +133,7 @@ export interface WorkspaceExtensionOpts {
    *  every repo operation is tenant-scoped server-side (overridable in tests). */
   makeForgejo?: (gateway: GatewayClient) => Forgejo
   /** Workspace-gateway client factory (overridable in tests). */
-  makeManager?: (cfg: GatewayConfig, tenant: string) => GatewayClient
+  makeManager?: (cfg: GatewayConfig, tenant: string, session: string) => GatewayClient
 }
 
 /**
@@ -152,20 +152,28 @@ export function createWorkspaceConfig(
   const makeClient = opts.makeClient ?? ((ep: { url: string; token: string }) => cache.get(ep))
   const makeForgejo = opts.makeForgejo ?? ((gateway: GatewayClient) => new Forgejo({ gateway }))
   const makeManager =
-    opts.makeManager ?? ((cfg: GatewayConfig, tenant: string) => createGatewayClient(cfg.url, cfg.token, tenant))
+    opts.makeManager ??
+    ((cfg: GatewayConfig, tenant: string, session: string) =>
+      createGatewayClient(cfg.url, cfg.token, tenant, session))
 
-  // One gateway client + resolver per (url, token, tenant), reused across
-  // calls. The tenant is part of the key because the client sends it as
-  // X-Abc-Tenant (the gateway acts on behalf of that tenant).
+  // One gateway client + resolver per (url, token, tenant, session), reused
+  // across calls. The tenant is sent as X-Abc-Tenant and the session as
+  // X-Session-Name (the gateway enforces tenant + session isolation from them).
   const managers = new Map<string, { client: GatewayClient; resolver: WorkerResolver }>()
-  const managerKey = (cfg: GatewayConfig, tenant: string): string => `${cfg.url}\u0000${cfg.token}\u0000${tenant}`
+  const managerKey = (cfg: GatewayConfig, tenant: string, session: string): string =>
+    `${cfg.url}\u0000${cfg.token}\u0000${tenant}\u0000${session}`
   const managerFor = (session: string, tenant: string, locale: string): GatewayClient => {
     const cfg = gatewayConfig(opts.getConfig, session, tenant, locale)
-    const key = managerKey(cfg, tenant)
+    const key = managerKey(cfg, tenant, session)
     let hit = managers.get(key)
     if (hit === undefined) {
-      const client = makeManager(cfg, tenant)
+      const client = makeManager(cfg, tenant, session)
       hit = { client, resolver: new WorkerResolver(client) }
+      // Bound the cache (LRU): a long-lived extension serves many sessions.
+      if (managers.size >= 128) {
+        const oldest = managers.keys().next().value
+        if (oldest !== undefined) managers.delete(oldest)
+      }
       managers.set(key, hit)
     }
     return hit.client
@@ -173,7 +181,7 @@ export function createWorkspaceConfig(
   const resolverFor = (session: string, tenant: string, locale: string): WorkerResolver => {
     const cfg = gatewayConfig(opts.getConfig, session, tenant, locale)
     managerFor(session, tenant, locale)
-    return managers.get(managerKey(cfg, tenant))!.resolver
+    return managers.get(managerKey(cfg, tenant, session))!.resolver
   }
 
   const repoClient = (session: string, tenant: string, locale: string): Forgejo =>
@@ -677,16 +685,23 @@ const REPO_ADDR = {
   ),
 }
 
+/** org/repo for an action confined to the session's OWN repository: both are
+ *  OPTIONAL and default to the session's; a mismatching value is refused. */
+const OWN_REPO_ADDR = {
+  org: str('Organization of YOUR repository (default: the session\'s org). Must match the session\'s repo.', '你自己仓库的组织（默认：当前会话的 org）。必须与会话的仓库一致。'),
+  repo: str('Your repository name (default: the session\'s repo). Must match the session\'s repo.', '你自己的仓库名（默认：当前会话的仓库）。必须与会话的仓库一致。'),
+}
+
 const TOOL_META: Record<string, ToolMeta> = {
 
   // ================= sandbox lifecycle (workspace gateway) =================
   'sandbox-create': {
     description:
-      'Create a sandbox and wait up to 60s for it to become healthy. A sandbox runs a PRE-BUILT image that already bundles the worker — the gateway no longer injects anything. `image` must be one of the deployment sandbox images from the dedicated sandbox org (see list-oci-images with owner="sandbox"); omit it for the deployment default. Returns the sandbox name, its in-cluster service DNS, and the worker environment (OS/arch, workspace root, boot id).',
-    descriptions: { zh: '创建沙箱并最多等待 60 秒就绪。沙箱运行的是预构建、已内置 worker 的镜像——网关不再做任何注入。`image` 必须是部署沙箱镜像（见 list-oci-images，owner="sandbox"）之一；省略则用部署默认镜像。返回沙箱名、集群内服务域名，以及 worker 环境（OS/架构、工作区根目录、boot id）。' },
+      'Create a sandbox and wait up to 60s for it to become healthy. A sandbox runs a PRE-BUILT image that already bundles the worker — the gateway no longer injects anything. `image` must be one of the deployment sandbox images from the dedicated sandbox org (see list-oci-images with owner="sandbox"); omit it for the deployment default. A name is never reused: if a sandbox with this name already exists the call is refused — delete it first with sandbox-delete. Returns the sandbox name, its in-cluster service DNS, and the worker environment (OS/arch, workspace root, boot id).',
+    descriptions: { zh: '创建沙箱并最多等待 60 秒就绪。沙箱运行的是预构建、已内置 worker 的镜像——网关不再做任何注入。`image` 必须是部署沙箱镜像（见 list-oci-images，owner="sandbox"）之一；省略则用部署默认镜像。沙箱名不可复用：若同名沙箱已存在则拒绝创建——请先用 sandbox-delete 删除。返回沙箱名、集群内服务域名，以及 worker 环境（OS/架构、工作区根目录、boot id）。' },
     inputSchema: obj(
       {
-        name: str('Logical sandbox name (unique among live sandboxes).', '逻辑沙箱名（在存活沙箱中唯一）。'),
+        name: str('Logical sandbox name. Must not already exist (a name is never reused; delete first).', '逻辑沙箱名。不得已存在（沙箱名不可复用；请先删除）。'),
         image: str('Sandbox image from the sandbox org (see list-oci-images; omit for the deployment default).', '沙箱组织下的沙箱镜像（见 list-oci-images；省略则用部署默认）。'),
         cpu: str('CPU request/limit, e.g. 500m or 1 (default 500m).', 'CPU 请求/上限，如 500m 或 1（默认 500m）。'),
         memory: str('Memory request/limit, e.g. 1Gi (default 1Gi).', '内存请求/上限，如 1Gi（默认 1Gi）。'),
@@ -837,9 +852,11 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: SANDBOX_REQUIRED,
   },
   'sandbox-job-list': {
-    description: 'List jobs registered in the worker (id, state, exit code, command).',
-    descriptions: { zh: '列出 worker 中登记的任务（id、状态、退出码、命令）。' },
-    inputSchema: obj({}),
+    description: 'List jobs registered in the worker: RUNNING jobs first, then the rest newest-first. Each row is id / state / exit / command (the text collapses a multi-line command to one truncated line; the card shows it in full). `limit` caps the number of jobs (default 50, max 500).',
+    descriptions: { zh: '列出 worker 中登记的任务：**进行中的优先**，其余按启动时间倒序。每行为 id / 状态 / 退出码 / 命令（文本会把多行命令折叠为一行并截断；卡片显示完整命令）。`limit` 限制条数（默认 50，最大 500）。' },
+    inputSchema: obj({
+      limit: int('Maximum jobs to return (default 50, max 500).', '最多返回条数（默认 50，最大 500）。'),
+    }),
     required: SANDBOX_REQUIRED,
   },
   'sandbox-file-read': {
@@ -947,16 +964,16 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: BRIDGE_REQUIRED,
   },
   'sandbox-port': {
-    description: 'Stage sandbox file(s) back to the repository (into the branch\'s staging commit; finalize with repo-commit). A single file is overwritten. A directory is ported as NEW files only: if any target path already exists in the repo, the whole port is refused (no directory overwrite).',
-    descriptions: { zh: '把沙箱文件暂存回仓库（进入分支的暂存提交；再用 repo-commit 最终提交）。单文件会覆盖；目录只作为新文件移植：只要任一目标路径已存在于仓库，整个移植被拒绝（目录不覆盖）。' },
+    description: 'Stage sandbox file(s) back to the repository (into the branch\'s staging commit; finalize with repo-commit). A single file is overwritten. A directory is ported as NEW files only: if any target path already exists in the repo, the whole port is refused (no directory overwrite). `path` is the SANDBOX path (relative to the workspace root); `repo-path` is REQUIRED and is the DESTINATION path inside the repository (relative to the repo root) — it is never inferred from `path` (a sandbox usually holds the repo under a `<repo>/` subdirectory, so defaulting would write `<repo>/...`).',
+    descriptions: { zh: '把沙箱文件暂存回仓库（进入分支的暂存提交；再用 repo-commit 最终提交）。单文件会覆盖；目录只作为新文件移植：只要任一目标路径已存在于仓库，整个移植被拒绝（目录不覆盖）。`path` 是**沙箱路径**（相对工作区根）；`repo-path` **必传**，是**仓库内目标路径**（相对仓库根）——绝不从 `path` 推断（沙箱通常把仓库放在 `<repo>/` 子目录下，若默认会写成 `<repo>/...`）。' },
     inputSchema: obj(
       {
         ...REPO_ADDR,
         path: str('Sandbox path (file or directory), relative to the workspace root.', '沙箱路径（文件或目录），相对于工作区根目录。'),
-        'repo-path': str('Destination repo path (defaults to the sandbox path).', '仓库目标路径（默认等于沙箱路径）。'),
+        'repo-path': str('REQUIRED. Destination path inside the repository (relative to the repo root).', '必传。仓库内目标路径（相对仓库根）。'),
         message: str('Commit message.', '提交信息。'),
       },
-      ['org', 'repo', 'path'],
+      ['org', 'repo', 'path', 'repo-path'],
     ),
     required: BRIDGE_REQUIRED,
   },
@@ -1360,15 +1377,17 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: REPO_REQUIRED,
   },
   'repo-branch-create': {
-    description: 'Create a branch from a ref (default: the repository default branch). MAINTAINER ONLY (main-branch session): a feature-branch session is bound to exactly one branch and cannot create more.',
-    descriptions: { zh: '从某个 ref 创建分支（默认：仓库默认分支）。仅限维护者（main 分支会话）：功能分支会话绑定到唯一分支，不能创建更多分支。' },
+    description: 'Create a branch from a ref (default: the repository default branch) and fork its developer session from the source branch. MAINTAINER ONLY (main-branch session), and ONLY in the session\'s OWN repository (`org`/`repo` default to it; a mismatching value is refused). The new session is seeded with a fork-context notice; when `task` is given it is dispatched immediately as a wake-up message (create + dispatch in one step).',
+    descriptions: { zh: '从某个 ref 创建分支（默认：仓库默认分支），并从源分支分叉出对应的开发者会话。仅限维护者（main 分支会话），且仅能在本会话**自己的仓库**中创建（`org`/`repo` 默认取会话自己的；不一致会被拒绝）。新会话会收到一条 fork 上下文通知；若提供 `task`，会立即作为唤醒消息派发（一步完成建分支+派活）。' },
     inputSchema: obj(
       {
-        ...REPO_ADDR,
+        ...OWN_REPO_ADDR,
+        ref: REPO_ADDR.ref,
         name: str('New branch name.', '新分支名。'),
         from: str('Source ref (default: the repo default branch).', '源 ref（默认：仓库默认分支）。'),
+        task: str('Optional task to dispatch to the new branch session immediately (wakes it).', '可选：立即派发给新分支会话的任务（会唤醒它）。'),
       },
-      ['org', 'repo', 'name'],
+      ['name'],
     ),
     required: REPO_REQUIRED,
   },
@@ -1379,15 +1398,16 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: REPO_REQUIRED,
   },
   'repo-tag-create': {
-    description: 'Create a tag at a target ref (default: the repository default branch).',
-    descriptions: { zh: '在某个目标 ref 创建标签（默认：仓库默认分支）。' },
+    description: 'Create a tag at a target ref (default: the repository default branch). OWN repository only (`org`/`repo` default to the session\'s; a mismatching value is refused).',
+    descriptions: { zh: '在某个目标 ref 创建标签（默认：仓库默认分支）。仅限本会话**自己的仓库**（`org`/`repo` 默认取会话自己的；不一致会被拒绝）。' },
     inputSchema: obj(
       {
-        ...REPO_ADDR,
+        ...OWN_REPO_ADDR,
+        ref: REPO_ADDR.ref,
         name: str('Tag name.', '标签名。'),
         target: str('Target ref (default: the repo default branch).', '目标 ref（默认：仓库默认分支）。'),
       },
-      ['org', 'repo', 'name'],
+      ['name'],
     ),
     required: REPO_REQUIRED,
   },
@@ -1432,8 +1452,8 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: REPO_REQUIRED,
   },
   'repo-mail-send': {
-    description: 'Send a message into a repository branch\'s session mailbox (wakes that session\'s turn). Addressing is by org/repo + optional branch (default main); the branch session is created if needed.',
-    descriptions: { zh: '向某仓库分支的会话邮箱投递一条消息（唤醒该会话的回合）。按 org/repo + 可选 branch（默认 main）寻址；分支会话不存在时会自动创建。' },
+    description: 'Send a message into a repository branch\'s session mailbox (wakes that session\'s turn). Addressing is by org/repo + optional branch (default main); the branch session is created if needed. A developer session may only message `main` of its own repository; a maintainer may message any branch of its own repo and `main` of another repo (never a non-main branch of another repo).',
+    descriptions: { zh: '向某仓库分支的会话邮箱投递一条消息（唤醒该会话的回合）。按 org/repo + 可选 branch（默认 main）寻址；分支会话不存在时会自动创建。开发者会话只能向本仓库的 `main` 发消息；维护者可以向本仓库任意分支、以及另一仓库的 `main` 发消息（不能发给另一仓库的非 main 分支）。' },
     inputSchema: obj(
       {
         ...REPO_ADDR,
@@ -1457,11 +1477,12 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: REPO_REQUIRED,
   },
   'repo-branch-sync': {
-    description: 'Catch a feature branch up with main by committing a merge of main into it. Files changed on both sides are merged automatically; genuine conflicts are written into the branch as ABCP-CONFLICT marker blocks that YOU must resolve (edit the file, then commit) before repo-mr-create/repo-mr-merge will accept the branch. Defaults to the current session\'s org/repo/branch.',
-    descriptions: { zh: '将 main 合并进功能分支，使分支追平 main。两侧都改动的文件自动合并；真正的冲突会以 ABCP-CONFLICT 标记块写入分支，必须由本会话解决（编辑文件后提交）才能通过 repo-mr-create/repo-mr-merge。默认使用当前会话的 org/repo/branch。' },
+    description: 'Catch a feature branch up with main by committing a merge of main into it. Files changed on both sides are merged automatically; genuine conflicts are written into the branch as ABCP-CONFLICT marker blocks that YOU must resolve (edit the file, then commit) before repo-mr-create/repo-mr-merge will accept the branch. Operates on the session\'s OWN repository/branch (`org`/`repo` default to it; a mismatching value is refused).',
+    descriptions: { zh: '将 main 合并进功能分支，使分支追平 main。两侧都改动的文件自动合并；真正的冲突会以 ABCP-CONFLICT 标记块写入分支，必须由本会话解决（编辑文件后提交）才能通过 repo-mr-create/repo-mr-merge。仅作用于本会话**自己的仓库/分支**（`org`/`repo` 默认取会话自己的；不一致会被拒绝）。' },
     inputSchema: obj(
       {
-        ...REPO_ADDR,
+        ...OWN_REPO_ADDR,
+        ref: REPO_ADDR.ref,
         branch: str('Feature branch (default: the session\'s branch).', '功能分支（默认：当前会话的分支）。'),
       },
       [],

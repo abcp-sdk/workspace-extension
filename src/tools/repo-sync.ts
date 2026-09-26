@@ -2,7 +2,7 @@ import { TypedToolError } from '@abc-protocol/sdk'
 import type { ToolResultData } from '@abc-protocol/sdk'
 import { tr } from '../i18n.js'
 import { requireArg, strArg } from './shared.js'
-import { validComponent, type RepoCtx } from './repo-content.js'
+import { ownRepoRef, validComponent, type RepoCtx } from './repo-content.js'
 
 /**
  * `repo-branch-sync`: integrate the base branch (`main`) into a FEATURE branch
@@ -87,27 +87,24 @@ export async function repoRestore(
   }
 }
 
-/** Resolve the sync target: explicit org/repo/branch, else the session's branch. */
+/** Resolve the sync target: explicit org/repo/branch, else the session's branch.
+ *  A session may only sync its OWN repository (org/repo default to the session's
+ *  and must match it). */
 function syncRef(ctx: RepoCtx, args: Record<string, unknown>): { org: string; repo: string; branch: string } {
+  const base = ownRepoRef(ctx, args)
   const parts = ctx.session.split(':')
-  const sessionOrg = parts.length === 3 ? (parts[0] ?? '') : ''
-  const sessionRepo = parts.length === 3 ? (parts[1] ?? '') : ''
   const sessionBranch = parts.length === 3 ? (parts[2] ?? '') : ''
-  const org = strArg(args, 'org') || sessionOrg
-  const repo = strArg(args, 'repo') || sessionRepo
   const branch = strArg(args, 'branch') || sessionBranch
-  if (org === '' || repo === '' || branch === '') {
+  if (branch === '') {
     throw new TypedToolError('invalid_argument', tr(ctx.locale, 'syncNeedsBranch'))
   }
-  for (const [key, val] of [['org', org], ['repo', repo], ['branch', branch]] as const) {
-    if (!validComponent(val)) {
-      throw new TypedToolError('invalid_argument', tr(ctx.locale, 'invalidName', { key, value: val }))
-    }
+  if (!validComponent(branch)) {
+    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'invalidName', { key: 'branch', value: branch }))
   }
   if (branch === 'main') {
     throw new TypedToolError('invalid_argument', tr(ctx.locale, 'syncMainRefused'))
   }
-  return { org, repo, branch }
+  return { org: base.org, repo: base.repo, branch }
 }
 
 /** Whether bytes are valid UTF-8 (so a text write is lossless). */

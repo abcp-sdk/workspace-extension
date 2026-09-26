@@ -133,6 +133,11 @@ export async function sandboxCreate(
     }
     return { content, data }
   } catch (e) {
+    // A name is never reused: the gateway refuses an existing sandbox with
+    // `already_exists`. Surface that distinctly (not as a fake timeout).
+    if (String(e).includes('[already_exists]')) {
+      throw new TypedToolError('invalid_argument', tr(ctx.locale, 'sandboxExists', { name }))
+    }
     // The gateway returns DeadlineExceeded when the worker did not become
     // healthy within 60s; the sandbox is left in place.
     throw new TypedToolError('retryable', tr(ctx.locale, 'sandboxCreateTimeout', { name, err: String(e) }))

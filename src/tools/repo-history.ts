@@ -3,7 +3,7 @@ import { TypedToolError } from '@abc-protocol/sdk'
 import { tr } from '../i18n.js'
 import { capLines, truncationNote } from './output.js'
 import { numArg, requireArg, strArg } from './shared.js'
-import { repoRef, resolveRepoRef, validComponent, type RepoCtx } from './repo-content.js'
+import { repoRef, ownRepoRef, resolveRepoRef, validComponent, type RepoCtx } from './repo-content.js'
 
 function short(sha: string): string {
   return sha.length > 8 ? sha.slice(0, 8) : sha
@@ -154,33 +154,69 @@ export async function repoBranches(
   }
 }
 
-/** `repo-branch-create`: create a branch from a ref. */
+/** `repo-branch-create`: create a branch from a ref.
+ *
+ * Also FORKS the branch's session from the source branch's session (repo:branch
+ * <-> session, 1:1). The new session is ALWAYS seeded with an `event` mailbox
+ * message carrying a fork-context preamble (its history belongs to the parent;
+ * it must plan with `todo-write`). When a `task` is given, a `trigger` follows
+ * the event (delivered after it, so the preamble lands first) that wakes the
+ * new session to do the work — one step: create branch + dispatch. */
 export async function repoBranchCreate(
   ctx: RepoCtx,
   args: Record<string, unknown>,
 ): Promise<ToolResultData> {
-  const r = await resolveRepoRef(ctx, args)
+  // A maintainer may only create branches in its OWN repository (org/repo
+  // default to the session's and must match it).
+  const r = ownRepoRef(ctx, args)
+  const from = strArg(args, 'from') || (r.ref !== '' ? r.ref : await ctx.forgejo.resolveRef(r.org, r.repo, '', ctx.locale))
   const name = requireName(requireArg(args, 'name', ctx.locale), 'name', ctx.locale)
-  const from = strArg(args, 'from') || r.ref
+  const task = strArg(args, 'task')
   await ctx.forgejo.createBranch(r.org, r.repo, name, from, ctx.locale)
   // Fork the corresponding branch session from the source branch's session
   // (repo:branch <-> session, 1:1). The source session is `org:repo:<from>`;
   // best-effort: on failure still ensure the new branch has SOME session.
+  let forked = true
   try {
     await ctx.gateway.forkBranchSession({
       session: `${r.org}:${r.repo}:${from}`,
       branch: name,
     })
   } catch {
+    forked = false
     try {
       await ctx.gateway.ensureBranchSession({ org: r.org, repo: r.repo, branch: name })
     } catch {
       /* best effort */
     }
   }
+  // Seed the new session. `event` only folds into context (no turn); it is sent
+  // BEFORE any task `trigger` so the preamble is the first thing in the chain.
+  const childSession = `${r.org}:${r.repo}:${name}`
+  if (ctx.deps !== undefined) {
+    const preamble = tr(ctx.locale, 'branchForkPreamble', {
+      org: r.org, repo: r.repo, branch: name, parent: ctx.session,
+    })
+    try {
+      await ctx.deps.publishMailbox(ctx.tenant, childSession, 'event', { content: preamble }, 'system:repo-branch-fork')
+    } catch {
+      /* best effort */
+    }
+    if (task !== '') {
+      const reminder = tr(ctx.locale, 'branchForkTodoReminder')
+      try {
+        await ctx.deps.publishMailbox(
+          ctx.tenant, childSession, 'trigger',
+          { text: `${reminder}\n\n${task}` }, `session:${ctx.session}`,
+        )
+      } catch {
+        /* best effort */
+      }
+    }
+  }
   return {
     content: tr(ctx.locale, 'repoBranchCreated', { name, org: r.org, repo: r.repo, from }),
-    data: { org: r.org, repo: r.repo, name, from },
+    data: { org: r.org, repo: r.repo, name, from, forked, dispatched: task !== '' },
   }
 }
 
@@ -199,14 +235,14 @@ export async function repoTags(
   }
 }
 
-/** `repo-tag-create`: create a tag at a target. */
+/** `repo-tag-create`: create a tag at a target (OWN repository only). */
 export async function repoTagCreate(
   ctx: RepoCtx,
   args: Record<string, unknown>,
 ): Promise<ToolResultData> {
-  const r = await resolveRepoRef(ctx, args)
+  const r = ownRepoRef(ctx, args)
   const name = requireName(requireArg(args, 'name', ctx.locale), 'name', ctx.locale)
-  const target = strArg(args, 'target') || r.ref
+  const target = strArg(args, 'target') || (r.ref !== '' ? r.ref : await ctx.forgejo.resolveRef(r.org, r.repo, '', ctx.locale))
   await ctx.forgejo.createTag(r.org, r.repo, name, target, ctx.locale)
   return {
     content: tr(ctx.locale, 'repoTagCreated', { name, org: r.org, repo: r.repo, target }),
@@ -217,7 +253,11 @@ export async function repoTagCreate(
 /** `repo-mr-create`: open a pull request.
  *
  * Routed through the GATEWAY so its conflict-marker gate applies (a branch
- * carrying unresolved ABCP-CONFLICT markers is refused). */
+ * carrying unresolved ABCP-CONFLICT markers is refused).
+ *
+ * After the MR is created the BASE branch's session is woken with a mailbox
+ * `trigger` (source `system:repo-mr`), so the reviewer (e.g. the main-branch
+ * maintainer) is notified instead of having to poll `repo-mr-list`. */
 export async function repoMrCreate(
   ctx: RepoCtx,
   args: Record<string, unknown>,
@@ -228,6 +268,33 @@ export async function repoMrCreate(
   const base = requireName(requireArg(args, 'base', ctx.locale), 'base', ctx.locale)
   const body = strArg(args, 'body')
   const res = await ctx.gateway.createMR({ org: r.org, repo: r.repo, title, head, base, body })
+  // Notify the base branch's session (best-effort: a delivery failure must not
+  // fail the MR). Skip when the base IS the caller (nothing to notify).
+  const baseSession = `${r.org}:${r.repo}:${base}`
+  if (ctx.deps !== undefined && baseSession !== ctx.session) {
+    const text = tr(ctx.locale, 'mrCreatedNotice', {
+      index: res.index,
+      title,
+      head,
+      base,
+      org: r.org,
+      repo: r.repo,
+      url: res.url,
+    })
+    // Ensure the base session exists so its mailbox is durable; a failure here
+    // (e.g. an agent that does not know the tenant yet) must not suppress the
+    // notification.
+    try {
+      await ctx.gateway.ensureBranchSession({ org: r.org, repo: r.repo, branch: base })
+    } catch {
+      /* best-effort */
+    }
+    try {
+      await ctx.deps.publishMailbox(ctx.tenant, baseSession, 'trigger', { text }, 'system:repo-mr')
+    } catch {
+      /* notification is best-effort */
+    }
+  }
   return {
     content: tr(ctx.locale, 'repoMrCreated', { index: res.index, org: r.org, repo: r.repo, url: res.url }),
     data: { org: r.org, repo: r.repo, index: res.index, url: res.url },
@@ -255,7 +322,12 @@ export async function repoMrList(
   }
 }
 
-/** `repo-mr-comment`: comment on a pull request. */
+/** `repo-mr-comment`: comment on a pull request.
+ *
+ * After the comment lands, the REVIEWER (the base branch's session — `main` for
+ * a feature branch) is woken with a `trigger` so it learns of the discussion
+ * without polling. When the reviewer itself comments, the HEAD (source) session
+ * is woken instead. Best-effort; a delivery failure never fails the comment. */
 export async function repoMrComment(
   ctx: RepoCtx,
   args: Record<string, unknown>,
@@ -265,6 +337,36 @@ export async function repoMrComment(
   if (index <= 0) throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'index' }))
   const body = requireArg(args, 'body', ctx.locale)
   await ctx.forgejo.createComment(r.org, r.repo, index, body, ctx.locale)
+  // Notify the OTHER side of the review: the reviewer normally, or the source
+  // session when the reviewer is the one commenting. Skip self / unknown.
+  if (ctx.deps !== undefined) {
+    try {
+      const mr = (await ctx.gateway.getMR({ org: r.org, repo: r.repo, index })).mr
+      const head = mr?.head ?? ''
+      const base = mr?.base || 'main'
+      const headSession = `${r.org}:${r.repo}:${head}`
+      const baseSession = `${r.org}:${r.repo}:${base}`
+      const target = ctx.session === baseSession ? headSession : baseSession
+      if (head !== '' && target !== ctx.session) {
+        const branch = target === headSession ? head : base
+        try {
+          await ctx.gateway.ensureBranchSession({ org: r.org, repo: r.repo, branch })
+        } catch {
+          /* best effort */
+        }
+        const text = tr(ctx.locale, 'mrCommentNotice', {
+          index, head, base, org: r.org, repo: r.repo, body,
+        })
+        try {
+          await ctx.deps.publishMailbox(ctx.tenant, target, 'trigger', { text }, 'system:repo-mr-comment')
+        } catch {
+          /* best effort */
+        }
+      }
+    } catch {
+      /* best effort: the comment already succeeded */
+    }
+  }
   return { content: tr(ctx.locale, 'repoMrCommented', { index, org: r.org, repo: r.repo }), data: { org: r.org, repo: r.repo, index } }
 }
 

@@ -1,6 +1,7 @@
 import type { Client, Interceptor } from '@connectrpc/connect'
-import { createClient } from '@connectrpc/connect'
+import { Code, createClient } from '@connectrpc/connect'
 import { createConnectTransport } from '@connectrpc/connect-node'
+import { TypedToolError } from '@abc-protocol/sdk'
 import { WorkerService } from './gen/worker/v1/worker_pb.js'
 import { BranchSessionService } from './gen/workspace/v1/workspace_pb.js'
 
@@ -52,18 +53,35 @@ export function createWorkerClient(ep: WorkerEndpoint): WorkerClient {
  * `tenant` is sent as `X-Abc-Tenant`: the extension authenticates with the
  * shared SERVICE token, and the gateway trusts this header to act on behalf of
  * the REAL tenant (so created sessions/sandboxes belong to that tenant, not the
- * synthetic service tenant). */
+ * synthetic service tenant).
+ *
+ * `session` is sent as `X-Session-Name`: the gateway uses it to enforce SESSION
+ * isolation — an agent session may only touch sandboxes bound to its own
+ * session (a feature branch must never drive another session's sandbox). */
 export function createGatewayClient(
   baseUrl: string,
   token: string,
   tenant = '',
+  session = '',
 ): GatewayClient {
   const transport = createConnectTransport({
     baseUrl: normalizeUrl(baseUrl),
     httpVersion: '1.1',
-    interceptors: [tenantInterceptor(tenant), bearerInterceptor(token)],
+    interceptors: [
+      tenantInterceptor(tenant),
+      sessionInterceptor(session),
+      bearerInterceptor(token),
+    ],
   })
   return createClient(BranchSessionService, transport)
+}
+
+/** Attach `X-Session-Name` to every call (no-op when session is empty). */
+function sessionInterceptor(session: string): Interceptor {
+  return next => async req => {
+    if (session !== '') req.header.set('X-Session-Name', session)
+    return next(req)
+  }
 }
 
 /** Attach `X-Abc-Tenant` to every call (no-op when tenant is empty). */
@@ -127,7 +145,20 @@ export class WorkerResolver {
   async resolve(name: string): Promise<WorkerEndpoint> {
     const hit = this.cache.get(name)
     if (hit !== undefined && Date.now() - hit.at < this.ttlMs) return hit.endpoint
-    const res = await this.workspace.resolveSandbox({ name })
+    let res: Awaited<ReturnType<GatewayClient['resolveSandbox']>>
+    try {
+      res = await this.workspace.resolveSandbox({ name })
+    } catch (e) {
+      // The gateway hides another session's sandbox as NotFound; surface it as
+      // a typed not_found so the tool layer does not report a bare `internal`.
+      // Match structurally (numeric Code or the `[not_found]` prefix) because a
+      // duplicate @connectrpc/connect instance can defeat `instanceof`.
+      const code = (e as { code?: unknown }).code
+      if (code === Code.NotFound || String(e).includes('[not_found]')) {
+        throw new TypedToolError('not_found', `sandbox not found: ${name}`)
+      }
+      throw e
+    }
     const endpoint: WorkerEndpoint = { url: res.url, token: res.token }
     this.cache.set(name, { endpoint, at: Date.now() })
     return endpoint

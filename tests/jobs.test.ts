@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { WorkerClient } from '../src/client.js'
 import {
   execCommand,
+  jobList,
   jobOutput,
   jobWait,
   type JobCtx,
@@ -118,5 +119,63 @@ describe('job-output', () => {
     })
     expect(r.content).toBe('b\nc')
     expect(r.data).toMatchObject({ start_line: 1, end_line: 3, total_lines: 4 })
+  })
+})
+
+describe('job-list', () => {
+  const entry = (id: string, state: string, startedAt: number, command = `echo ${id}`) => ({
+    id,
+    state,
+    exitCode: 0,
+    startedAt: BigInt(startedAt),
+    finishedAt: 0n,
+    command,
+  })
+
+  function listCtx(jobs: ReturnType<typeof entry>[]) {
+    let gotLimit = -1
+    const client = {
+      listJobs: async (req: { limit: number }) => {
+        gotLimit = req.limit
+        return { jobs }
+      },
+    } as unknown as WorkerClient
+    return { c: { client } as JobCtx, limit: () => gotLimit }
+  }
+
+  it('defaults limit to 50 and passes it to the worker', async () => {
+    const { c, limit } = listCtx([])
+    await jobList(c, {})
+    expect(limit()).toBe(50)
+  })
+
+  it('caps limit at 500', async () => {
+    const { c, limit } = listCtx([])
+    await jobList(c, { limit: 9999 })
+    expect(limit()).toBe(500)
+  })
+
+  it('orders RUNNING first, then newest-first', async () => {
+    const { c } = listCtx([
+      entry('done-new', 'done', 300),
+      entry('running-old', 'running', 100),
+      entry('done-old', 'done', 200),
+    ])
+    const r = await jobList(c, {})
+    const ids = (r.data as { jobs: Array<{ id: string }> }).jobs.map(j => j.id)
+    expect(ids).toEqual(['running-old', 'done-new', 'done-old'])
+  })
+
+  it('collapses a multi-line command to ONE truncated line in the text, keeping it full in data', async () => {
+    const multiline = `echo "=== a ==="\npgrep -af x\necho "=== b ==="\n${'z'.repeat(300)}`
+    const { c } = listCtx([entry('j1', 'done', 1, multiline)])
+    const r = await jobList(c, {})
+    const text = String(r.content)
+    expect(text.split('\n')).toHaveLength(1) // one physical line per job
+    expect(text).toContain('j1')
+    expect(text).toContain('…')
+    // data keeps the FULL command
+    const job = (r.data as { jobs: Array<{ command: string }> }).jobs[0]!
+    expect(job.command).toBe(multiline)
   })
 })

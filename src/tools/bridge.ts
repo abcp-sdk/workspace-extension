@@ -63,17 +63,42 @@ export async function sandboxCheckout(
   }
 }
 
-/** A file to port: repo-relative path + content. */
+/** A file to port: repo-relative path + content.
+ *
+ * `content` is used when the bytes are VALID UTF-8 (the string round-trips to
+ * the identical bytes); `contentBytes` carries RAW bytes for everything else.
+ * NEVER lossily decode a binary: `TextDecoder().decode` replaces each invalid
+ * byte with U+FFFD (EF BF BD), which corrupts the file (and changes its hash). */
 interface PortedFile {
   path: string
-  content: string
+  content?: string
+  contentBytes?: Uint8Array
 }
 
 /**
- * `sandbox-port`: commit sandbox file(s) back to the repo. A single file is
- * overwritten (update). A directory is ported as NEW files only — if ANY file
+ * Build a ported file from raw sandbox bytes, choosing the byte-exact
+ * representation: a full fatal UTF-8 decode succeeds → string; any invalid
+ * byte → raw bytes. A valid UTF-8 file (even one containing NULs) decodes and
+ * re-encodes losslessly, so text stays text and binary stays binary.
+ */
+function portedFile(path: string, bytes: Uint8Array): PortedFile {
+  try {
+    return { path, content: new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
+  } catch {
+    return { path, contentBytes: bytes }
+  }
+}
+
+/**
+ * `sandbox-port`: commit sandbox file(s) back to the repository. A single file
+ * is overwritten (update). A directory is ported as NEW files only — if ANY file
  * in the directory already exists in the repo, the whole port is refused (no
- * overwrite logic for directory ports, per design).
+ * directory overwrite).
+ *
+ * `repo-path` is REQUIRED: the destination path inside the repository (relative
+ * to the repo root). It is never inferred from the sandbox path, because a
+ * sandbox usually holds the repo under a `<repo>/` subdirectory — defaulting to
+ * the sandbox path would write `easyvcs/...` instead of the intended root path.
  */
 export async function sandboxPort(
   ctx: BridgeCtx,
@@ -84,7 +109,10 @@ export async function sandboxPort(
   if (sandboxPath === '') {
     throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'path' }))
   }
-  const repoPath = strArg(args, 'repo-path') || sandboxPath
+  const repoPath = strArg(args, 'repo-path')
+  if (repoPath === '') {
+    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'repo-path' }))
+  }
   // A port needs a concrete branch; an empty ref falls back to the session's
   // own branch, else the repo default.
   const r: RepoRef = {
@@ -104,7 +132,7 @@ export async function sandboxPort(
     files = await collectDir(ctx.client, sandboxPath, repoPath)
   } else {
     const data = await ctx.client.fileRead({ path: sandboxPath })
-    files = [{ path: repoPath, content: new TextDecoder().decode(data.content) }]
+    files = [portedFile(repoPath, data.content)]
   }
   if (files.length === 0) {
     throw new TypedToolError('invalid_argument', tr(ctx.locale, 'portNoFiles', { path: sandboxPath }))
@@ -138,7 +166,8 @@ export async function sandboxPort(
   const commitFiles: CommitFile[] = files.map(f => ({
     path: f.path,
     operation: stat.isDir ? 'create' : 'update',
-    content: f.content,
+    ...(f.content !== undefined ? { content: f.content } : {}),
+    ...(f.contentBytes !== undefined ? { contentBytes: f.contentBytes } : {}),
   }))
   const res = await ctx.forgejo.applyFiles(r.org, r.repo, commitFiles, {
     ref: r.ref,
@@ -160,7 +189,7 @@ async function collectDir(client: WorkerClient, sandboxDir: string, repoDir: str
   const res = await client.fileList({ path: sandboxDir })
   if (!res.isDir) {
     const data = await client.fileRead({ path: sandboxDir })
-    return [{ path: repoDir, content: new TextDecoder().decode(data.content) }]
+    return [portedFile(repoDir, data.content)]
   }
   for (const entry of res.files) {
     const name = entry.path.split('/').pop() ?? entry.path
@@ -169,7 +198,7 @@ async function collectDir(client: WorkerClient, sandboxDir: string, repoDir: str
       out.push(...(await collectDir(client, entry.path, repoChild)))
     } else {
       const data = await client.fileRead({ path: entry.path })
-      out.push({ path: repoChild, content: new TextDecoder().decode(data.content) })
+      out.push(portedFile(repoChild, data.content))
     }
   }
   return out

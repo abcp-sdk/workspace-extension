@@ -43,17 +43,32 @@ describe('repo-branch-sync', () => {
     expect(String(res.content)).toContain('src/a.ts')
   })
 
-  it('accepts explicit overrides', async () => {
-    const { c, calls } = syncCtx({ clean: true })
-    await repoBranchSync(c, { org: 'o', repo: 'r', branch: 'dev' })
-    expect(calls).toEqual([{ org: 'o', repo: 'r', branch: 'dev' }])
+  it('reports a clean sync with the correct direction (main INTO the branch)', async () => {
+    const { c } = syncCtx({ clean: true, commit: 'deadbeefcafe' })
+    const res = await repoBranchSync(c, {})
+    // The branch is updated; main is untouched. The wording must not suggest
+    // the reverse.
+    expect(String(res.content)).toContain('Merged main into acme/web:feature/x')
+    expect(String(res.content)).not.toContain('with main')
   })
 
-  it('refuses main and non-session use without args', async () => {
+  it('accepts an explicit branch within its own repo', async () => {
+    const { c, calls } = syncCtx({ clean: true })
+    await repoBranchSync(c, { branch: 'feature/y' })
+    expect(calls).toEqual([{ org: 'acme', repo: 'web', branch: 'feature/y' }])
+  })
+
+  it('refuses syncing another repository', async () => {
+    const { c, calls } = syncCtx({ clean: true })
+    await expect(repoBranchSync(c, { org: 'other', repo: 'lib' })).rejects.toThrow(/own repository/)
+    expect(calls).toEqual([])
+  })
+
+  it('refuses main, and a non-branch session without explicit org/repo', async () => {
     const { c } = syncCtx({ clean: true })
     await expect(repoBranchSync(c, { branch: 'main' })).rejects.toThrow(/main/)
     const s = syncCtx({ clean: true }, 'plain-session')
-    await expect(repoBranchSync(s.c, {})).rejects.toThrow(/branch/)
+    await expect(repoBranchSync(s.c, {})).rejects.toThrow(/org/)
   })
 })
 

@@ -8,6 +8,7 @@ import {
 } from '../src/tools/text.js'
 import {
   deleteFile,
+  downloadFile,
   editFile,
   readFile,
   uploadFile,
@@ -15,6 +16,7 @@ import {
   type FileCtx,
 } from '../src/tools/files.js'
 import type { WorkerClient } from '../src/client.js'
+import type { WorkspaceDeps } from '../src/deps.js'
 import type { SessionEditState } from '../src/tools/edit-state.js'
 
 const enc = (s: string) => new TextEncoder().encode(s)
@@ -359,7 +361,7 @@ describe('upload', () => {
   it('routes bytes through ingest with a default name', async () => {
     const files = { 'dir/a.txt': enc('data') }
     let seen: { name: string; len: number } | undefined
-    await uploadFile(
+    const r = await uploadFile(
       fileCtx(files, (name, data) => {
         seen = { name, len: data.length }
         return { code: 'c0de', mime: 'text/plain' }
@@ -367,5 +369,39 @@ describe('upload', () => {
       { path: 'dir/a.txt' },
     )
     expect(seen).toEqual({ name: 'a.txt', len: 4 })
+    expect(r.data).toEqual({
+      files: [{ code: 'c0de', name: 'a.txt', mime: 'text/plain', size: 4 }],
+    })
+  })
+})
+
+describe('download', () => {
+  it('exposes the fetched file under data.files', async () => {
+    const files: Record<string, Uint8Array> = {}
+    const written: { path: string; len: number }[] = []
+    const c: FileCtx = {
+      client: {
+        fileWrite: async (req: { path: string; content: Uint8Array }) => {
+          written.push({ path: req.path, len: req.content.length })
+          return { ok: true }
+        },
+      } as unknown as WorkerClient,
+      deps: {
+        getFile: async () => ({
+          data: enc('hello'),
+          name: 'note.txt',
+          mime: 'text/plain',
+        }),
+      } as unknown as WorkspaceDeps,
+      tenant: 't1',
+      session: 'acme:web:main',
+      locale: 'en',
+    }
+    void files
+    const r = await downloadFile(c, { code: 'c0de', path: 'dir/note.txt' })
+    expect(written).toEqual([{ path: 'dir/note.txt', len: 5 }])
+    expect(r.data).toEqual({
+      files: [{ code: 'c0de', name: 'note.txt', mime: 'text/plain', size: 5 }],
+    })
   })
 })

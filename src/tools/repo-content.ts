@@ -74,6 +74,44 @@ export function repoRef(args: Record<string, unknown>, locale: string): RepoRef 
     locale,  )
 }
 
+/** The `org`/`repo` a session is bound to, or null for a non-branch session. */
+export function sessionRepo(session: string): { org: string; repo: string; branch: string } | null {
+  const parts = session.split(':')
+  if (parts.length !== 3) return null
+  const [org, repo, branch] = parts as [string, string, string]
+  if (!validComponent(org) || !validComponent(repo) || !validComponent(branch)) return null
+  return { org, repo, branch }
+}
+
+/**
+ * Read `org`/`repo` for a tool that may ONLY act on the CALLER'S OWN repository
+ * (repo-branch-create / repo-tag-create / repo-branch-sync). Both arguments are
+ * OPTIONAL and default to the session's own `org`/`repo`; when supplied they
+ * MUST match the session's repository, otherwise `permission_denied`. A session
+ * that is not bound to a branch (`sessionRepo` null) must pass both explicitly.
+ */
+export function ownRepoRef(ctx: RepoCtx, args: Record<string, unknown>): RepoRef {
+  const self = sessionRepo(ctx.session)
+  const argOrg = strArg(args, 'org')
+  const argRepo = strArg(args, 'repo')
+  if (self !== null) {
+    const org = argOrg || self.org
+    const repo = argRepo || self.repo
+    if (org !== self.org || repo !== self.repo) {
+      throw new TypedToolError(
+        'permission_denied',
+        tr(ctx.locale, 'ownRepoOnly', { org: self.org, repo: self.repo }),
+      )
+    }
+    return validateRef({ org, repo, ref: strArg(args, 'ref') }, ctx.locale)
+  }
+  // No branch binding: require an explicit repo (validated as usual).
+  return validateRef(
+    { org: requireArg(args, 'org', ctx.locale), repo: requireArg(args, 'repo', ctx.locale), ref: strArg(args, 'ref') },
+    ctx.locale,
+  )
+}
+
 /**
  * Like `repoRef`, but resolves an empty `ref` to the repository's default
  * branch (one extra metadata call). Tools that pass `ref` to an endpoint that
