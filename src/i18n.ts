@@ -209,6 +209,42 @@ export const CATALOG = {
     en: 'service-deploy failed: {err}',
     zh: 'service-deploy 失败：{err}',
   },
+  helmRendered: {
+    en: "Rendered release '{release}' ({count} objects):",
+    zh: "已渲染 release '{release}'（{count} 个对象）：",
+  },
+  helmDeployed: {
+    en: "Helm release '{release}' deployed (revision {revision}).",
+    zh: "Helm release '{release}' 已部署（revision {revision}）。",
+  },
+  helmFailed: {
+    en: '{op} failed: {err}',
+    zh: '{op} 失败：{err}',
+  },
+  helmNone: {
+    en: '(no Helm releases)',
+    zh: '（无 Helm release）',
+  },
+  helmListHeader: {
+    en: 'Helm releases ({count}):',
+    zh: 'Helm release（{count} 个）：',
+  },
+  helmHistoryHeader: {
+    en: "History of '{release}' ({count} revisions):",
+    zh: "'{release}' 的历史（{count} 个 revision）：",
+  },
+  helmRolledBack: {
+    en: "Rolled back '{release}' (now revision {revision}).",
+    zh: "已回滚 '{release}'（现为 revision {revision}）。",
+  },
+  helmUninstalled: {
+    en: "Uninstalled Helm release '{release}'.",
+    zh: "已卸载 Helm release '{release}'。",
+  },
+  helmNotFound: {
+    en: "Helm release '{release}' not found.",
+    zh: "未找到 Helm release '{release}'。",
+  },
   serviceNone: {
     en: 'No services.',
     zh: '没有服务。',

@@ -116,6 +116,14 @@ import {
   pvcList,
   type PVCContext,
 } from './tools/pvc.js'
+import {
+  helmDeploy,
+  helmHistory,
+  helmList,
+  helmRollback,
+  helmUninstall,
+  type HelmCtx,
+} from './tools/helm.js'
 
 export const EXT_ID = 'workspace'
 export const EXT_VERSION = '0.14.1'
@@ -401,6 +409,17 @@ export function createWorkspaceConfig(
       return fn({ workspace: managerFor(s, t, locale), session: s, locale }, args ?? {})
     }
 
+  /** Wrap a helm (chart release) tool. */
+  const helmWrap = (
+    fn: (ctx: HelmCtx, args: Record<string, unknown>) => Promise<ToolResultData>,
+  ): ToolSpec['execute'] =>
+    async (args, _callId, sessionName, _signal, tenant) => {
+      const t = tenant ?? ''
+      const s = sessionName ?? ''
+      const locale = await localeOf(deps, t, s)
+      return fn({ workspace: managerFor(s, t, locale), session: s, locale }, args ?? {})
+    }
+
   /** Wrap a pvc (workspace gateway storage) tool. */
   const pvcWrap = (
     fn: (ctx: PVCContext, args: Record<string, unknown>) => Promise<ToolResultData>,
@@ -486,6 +505,11 @@ export function createWorkspaceConfig(
     'service-list': serviceWrap(serviceList),
     'service-delete': serviceWrap(serviceDelete),
     'service-logs': serviceWrap(serviceLogs),
+    'helm-deploy': helmWrap(helmDeploy),
+    'helm-list': helmWrap(helmList),
+    'helm-history': helmWrap(helmHistory),
+    'helm-rollback': helmWrap(helmRollback),
+    'helm-uninstall': helmWrap(helmUninstall),
     'pvc-create': pvcWrap(pvcCreate),
     'pvc-list': pvcWrap(pvcList),
     'pvc-delete': pvcWrap(pvcDelete),
@@ -1426,6 +1450,51 @@ const TOOL_META: Record<string, ToolMeta> = {
       },
       ['name'],
     ),
+    required: SANDBOX_REQUIRED,
+  },
+  'helm-deploy': {
+    description: 'Render a Helm chart from the repository and apply it to the cluster as a RELEASE (create or upgrade). The chart is the repo-relative directory holding Chart.yaml (`chart-path`, default "."). `values` is the values.yaml content. The rendered manifest is filtered to a safe namespaced kind whitelist (no cluster-scoped/RBAC/CRD/privileged/hostPath) and pinned to the managed namespace. Set dry-run=true to render + validate only. Records a revision you can roll back to.',
+    descriptions: { zh: '把仓库中的 Helm chart 渲染并应用到集群为一个 RELEASE（创建或升级）。chart 是仓库内包含 Chart.yaml 的目录（`chart-path`，默认 "."）。`values` 是 values.yaml 内容。渲染结果会被过滤为安全的、限定命名空间的 kind 白名单（禁止 cluster-scoped/RBAC/CRD/privileged/hostPath），并固定到受管命名空间。dry-run=true 只渲染+校验。会记录可回滚的 revision。' },
+    inputSchema: obj(
+      {
+        release: str('Release name (a DNS-1123 label).', 'Release 名称（DNS-1123 label）。'),
+        ...REPO_ADDR,
+        'chart-path': str('Repo-relative chart directory (holds Chart.yaml; default ".").', '仓库内 chart 目录（含 Chart.yaml；默认 "."）。'),
+        values: str('values.yaml content.', 'values.yaml 内容。'),
+        'dry-run': { type: 'boolean', description: 'Render + validate only (no apply).', descriptions: { zh: '仅渲染+校验（不应用）。' } },
+      },
+      ['release', 'org', 'repo'],
+    ),
+    required: REPO_REQUIRED,
+  },
+  'helm-list': {
+    description: 'List the Helm releases this tenant deployed (name, revision, status, chart path/ref).',
+    descriptions: { zh: '列出本租户部署的 Helm release（名称、revision、状态、chart 路径/ref）。' },
+    inputSchema: obj({}),
+    required: SANDBOX_REQUIRED,
+  },
+  'helm-history': {
+    description: 'Show a Helm release\'s revision history (chart path, ref, objects per revision).',
+    descriptions: { zh: '查看某个 Helm release 的 revision 历史（每个 revision 的 chart 路径、ref、对象）。' },
+    inputSchema: obj({ release: str('Release name.', 'Release 名称。') }, ['release']),
+    required: SANDBOX_REQUIRED,
+  },
+  'helm-rollback': {
+    description: 'Roll a Helm release back to a prior revision (re-applies that revision\'s manifest and records a new revision). revision=0 means the previous revision.',
+    descriptions: { zh: '把 Helm release 回滚到某个历史 revision（重新应用该 revision 的清单并记录一个新 revision）。revision=0 表示上一个 revision。' },
+    inputSchema: obj(
+      {
+        release: str('Release name.', 'Release 名称。'),
+        revision: int('Target revision (0 = previous).', '目标 revision（0 = 上一个）。'),
+      },
+      ['release'],
+    ),
+    required: SANDBOX_REQUIRED,
+  },
+  'helm-uninstall': {
+    description: 'Delete a Helm release and every object it created. Destructive.',
+    descriptions: { zh: '删除 Helm release 及其创建的所有对象。破坏性操作。' },
+    inputSchema: obj({ release: str('Release name.', 'Release 名称。') }, ['release']),
     required: SANDBOX_REQUIRED,
   },
   'pvc-create': {
