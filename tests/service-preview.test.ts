@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { repoBuildPreview } from '../src/tools/imagebuild.js'
-import { serviceLogs, servicePreview } from '../src/tools/services.js'
+import { serviceDeploy, serviceLogs, servicePreview } from '../src/tools/services.js'
 import type { ServiceCtx } from '../src/tools/services.js'
 import type { BuildCtx } from '../src/tools/imagebuild.js'
 
@@ -114,5 +114,70 @@ describe('repo-build-preview', () => {
     const { c, calls } = buildCtx()
     await expect(repoBuildPreview(c, { org: 'myuser' })).rejects.toThrow(/repo/)
     expect(calls).toHaveLength(0)
+  })
+})
+
+describe('service-deploy Tier 0', () => {
+  it('forwards Tier 0 fields (resources/probes/rollout/config/sidecars)', async () => {
+    const calls: unknown[] = []
+    const c = {
+      workspace: {
+        async deployService(r: unknown) {
+          calls.push(r)
+          return {
+            service: {
+              name: 'web', image: 'img:1', url: 'http://web:80',
+              phase: 'Pending', ready: false, replicas: 1, ports: [],
+            },
+          }
+        },
+      },
+      session: 't:r:b',
+      locale: 'en',
+    } as unknown as ServiceCtx
+    await serviceDeploy(c, {
+      image: 'img:1',
+      resources: { cpu: '100m', memory: '128Mi', 'cpu-limit': '1', 'memory-limit': '512Mi' },
+      'readiness-probe': { 'http-port': 8080, 'http-path': '/healthz' },
+      'liveness-probe': { 'exec-command': ['true'] },
+      rollout: { 'max-surge': '25%', 'max-unavailable': '0' },
+      'env-refs': [{ name: 'DB', 'config-map': 'cfg', 'config-key': 'db' }],
+      'env-from': [{ secret: 'sec' }],
+      'config-mounts': [{ 'config-map': 'cfg', 'mount-path': '/etc/cfg' }],
+      sidecars: [{ name: 'helper', image: 'busybox', init: true }],
+      'node-selector': { disk: 'ssd' },
+      tolerations: [{ key: 'dedicated', operator: 'Exists', effect: 'NoSchedule' }],
+    })
+    expect(calls[0]).toMatchObject({
+      resources: { cpu: '100m', memory: '128Mi', cpuLimit: '1', memoryLimit: '512Mi' },
+      readinessProbe: { httpPort: 8080, httpPath: '/healthz' },
+      livenessProbe: { execCommand: ['true'] },
+      rollout: { maxSurge: '25%', maxUnavailable: '0' },
+      envRefs: [{ name: 'DB', configMap: 'cfg', configKey: 'db' }],
+      envFrom: [{ secret: 'sec' }],
+      configMounts: [{ configMap: 'cfg', mountPath: '/etc/cfg' }],
+      sidecars: [{ name: 'helper', image: 'busybox', init: true }],
+      nodeSelector: { disk: 'ssd' },
+      tolerations: [{ key: 'dedicated', operator: 'Exists', effect: 'NoSchedule' }],
+    })
+  })
+
+  it('omits Tier 0 fields when absent', async () => {
+    const calls: unknown[] = []
+    const c = {
+      workspace: {
+        async deployService(r: unknown) {
+          calls.push(r)
+          return { service: { name: 'web', image: 'img:1', url: 'http://web:80', phase: 'Pending', ready: false, replicas: 1, ports: [] } }
+        },
+      },
+      session: 't:r:b',
+      locale: 'en',
+    } as unknown as ServiceCtx
+    await serviceDeploy(c, { image: 'img:1' })
+    const req = calls[0] as Record<string, unknown>
+    expect(req['resources']).toBeUndefined()
+    expect(req['readinessProbe']).toBeUndefined()
+    expect(req['sidecars']).toBeUndefined()
   })
 })

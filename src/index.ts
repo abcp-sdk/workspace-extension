@@ -705,6 +705,144 @@ const EDIT_DESC_ZH =
   'ANCHOR（两个都必填）：anchor-before/anchor-after = 你对编辑区【外】紧邻的【不变】行的当前原文抄写——编辑区上方那行（第 start-line - 1 行）与下方那行（第 end-line + 1 行），来自 read 输出、去掉行号前缀。它们不是被编辑的行本身。某一侧不存在时（start-line == 1 无上方行；end-line == 总行数 无下方行；空文件两侧都没有），该参数必须传空字符串。工具用 trim() 比对，任一 anchor 不匹配则拒绝编辑（不写盘）——这能在写盘前发现编辑区上方或下方的任何行数位移。' +
   '会话必须先 read（或 write）过该文件，只能修改已“看到”的行，且文件自读取后不得变化。编辑成功后需重新 read。返回一行摘要及 unified diff。'
 
+/** The `probe` object shared by readiness/liveness/startup probes. */
+const probeSchema = (): Record<string, unknown> => ({
+  type: 'object',
+  description:
+    'A container probe. Set exactly one action: http-port (HTTP GET, with http-path), tcp-port (TCP connect), or exec-command (run in the container). Timing fields default to the k8s defaults.',
+  descriptions: {
+    zh: '容器探针。三个动作只设其一：http-port（HTTP GET，配 http-path）、tcp-port（TCP 连接）或 exec-command（在容器内执行）。时序字段默认用 k8s 默认值。',
+  },
+  properties: {
+    'http-path': str('HTTP path for http-port (default "/").', 'http-port 的 HTTP 路径（默认 "/"）。'),
+    'http-port': int('HTTP GET port.', 'HTTP GET 端口。'),
+    'tcp-port': int('TCP connect port.', 'TCP 连接端口。'),
+    'exec-command': { type: 'array', items: { type: 'string' }, description: 'Exec command (argv).', descriptions: { zh: 'Exec 命令（argv）。' } },
+    'initial-delay-seconds': int('initialDelaySeconds.', 'initialDelaySeconds。'),
+    'period-seconds': int('periodSeconds.', 'periodSeconds。'),
+    'timeout-seconds': int('timeoutSeconds.', 'timeoutSeconds。'),
+    'failure-threshold': int('failureThreshold.', 'failureThreshold。'),
+    'success-threshold': int('successThreshold.', 'successThreshold。'),
+  },
+})
+
+/**
+ * The Tier 0 single-Deployment enhancement arguments shared by service-deploy
+ * and service-preview: resources, probes, rollout strategy, ConfigMap/Secret
+ * env + volume refs, sidecars/init containers, and scheduling.
+ */
+const tier0Schema = (): Record<string, unknown> => ({
+  resources: {
+    type: 'object',
+    description: 'Split resource requests/limits (overrides cpu/memory).',
+    descriptions: { zh: '拆分资源 requests/limits（覆盖 cpu/memory）。' },
+    properties: {
+      cpu: str('CPU request (e.g. 100m).', 'CPU 请求（如 100m）。'),
+      memory: str('Memory request (e.g. 128Mi).', '内存请求（如 128Mi）。'),
+      'cpu-limit': str('CPU limit.', 'CPU 上限。'),
+      'memory-limit': str('Memory limit.', '内存上限。'),
+    },
+  },
+  'readiness-probe': probeSchema(),
+  'liveness-probe': probeSchema(),
+  'startup-probe': probeSchema(),
+  rollout: {
+    type: 'object',
+    description: 'RollingUpdate strategy (k8s quantity/percent, e.g. "25%" or "1").',
+    descriptions: { zh: 'RollingUpdate 策略（k8s 数量/百分比，如 "25%" 或 "1"）。' },
+    properties: {
+      'max-surge': str('maxSurge.', 'maxSurge。'),
+      'max-unavailable': str('maxUnavailable.', 'maxUnavailable。'),
+    },
+  },
+  'env-refs': {
+    type: 'array',
+    description: 'Env vars from a ConfigMap/Secret key. Each: { name, config-map?, config-key?, secret?, secret-key? }.',
+    descriptions: { zh: '从 ConfigMap/Secret 的键注入环境变量。每项：{ name, config-map?, config-key?, secret?, secret-key? }。' },
+    items: {
+      type: 'object',
+      properties: {
+        name: str('Env var name.', '环境变量名。'),
+        'config-map': str('ConfigMap name.', 'ConfigMap 名。'),
+        'config-key': str('ConfigMap key.', 'ConfigMap 键。'),
+        secret: str('Secret name.', 'Secret 名。'),
+        'secret-key': str('Secret key.', 'Secret 键。'),
+      },
+      required: ['name'],
+    },
+  },
+  'env-from': {
+    type: 'array',
+    description: 'Inject ALL keys of a ConfigMap or Secret as env. Each: { config-map?, secret? }.',
+    descriptions: { zh: '把 ConfigMap 或 Secret 的所有键注入为环境变量。每项：{ config-map?, secret? }。' },
+    items: {
+      type: 'object',
+      properties: {
+        'config-map': str('ConfigMap name.', 'ConfigMap 名。'),
+        secret: str('Secret name.', 'Secret 名。'),
+      },
+    },
+  },
+  'config-mounts': {
+    type: 'array',
+    description: 'Mount a ConfigMap/Secret as a volume. Each: { config-map?, secret?, mount-path, items?: [{key, path}] }.',
+    descriptions: { zh: '把 ConfigMap/Secret 挂载为卷。每项：{ config-map?, secret?, mount-path, items?: [{key, path}] }。' },
+    items: {
+      type: 'object',
+      properties: {
+        'config-map': str('ConfigMap name.', 'ConfigMap 名。'),
+        secret: str('Secret name.', 'Secret 名。'),
+        'mount-path': str('Absolute mount path in the container.', '容器内绝对挂载路径。'),
+        items: {
+          type: 'array',
+          description: 'Keys to project into files.',
+          descriptions: { zh: '要投射为文件的键。' },
+          items: {
+            type: 'object',
+            properties: { key: str('Key.', '键。'), path: str('Relative file path.', '相对文件路径。') },
+            required: ['key', 'path'],
+          },
+        },
+      },
+      required: ['mount-path'],
+    },
+  },
+  sidecars: {
+    type: 'array',
+    description: 'Extra containers. init=true makes an init container. Each: { name, image, command?, env?, cpu?, memory?, init? }.',
+    descriptions: { zh: '附加容器。init=true 即初始化容器。每项：{ name, image, command?, env?, cpu?, memory?, init? }。' },
+    items: {
+      type: 'object',
+      properties: {
+        name: str('Container name.', '容器名。'),
+        image: str('Image.', '镜像。'),
+        command: { type: 'array', items: { type: 'string' }, description: 'Command override (argv).', descriptions: { zh: '命令覆盖（argv）。' } },
+        env: { type: 'object', additionalProperties: { type: 'string' }, description: 'Env vars.', descriptions: { zh: '环境变量。' } },
+        cpu: str('CPU request.', 'CPU 请求。'),
+        memory: str('Memory request.', '内存请求。'),
+        init: { type: 'boolean', description: 'Run as an init container.', descriptions: { zh: '作为初始化容器运行。' } },
+      },
+      required: ['name', 'image'],
+    },
+  },
+  'node-selector': { type: 'object', additionalProperties: { type: 'string' }, description: 'nodeSelector labels.', descriptions: { zh: 'nodeSelector 标签。' } },
+  tolerations: {
+    type: 'array',
+    description: 'Pod tolerations. Each: { key, operator?, value?, effect? }.',
+    descriptions: { zh: 'Pod 容忍。每项：{ key, operator?, value?, effect? }。' },
+    items: {
+      type: 'object',
+      properties: {
+        key: str('Taint key.', '污点键。'),
+        operator: { type: 'string', enum: ['Equal', 'Exists'] },
+        value: str('Taint value.', '污点值。'),
+        effect: { type: 'string', enum: ['NoSchedule', 'PreferNoSchedule', 'NoExecute'] },
+      },
+      required: ['key'],
+    },
+  },
+})
+
 /** The sandbox to run against (a name from sandbox-create / sandbox-list). */
 const WORKER_NAME = str(
   'Sandbox name to run against (from sandbox-create or sandbox-list).',
@@ -1195,6 +1333,7 @@ const TOOL_META: Record<string, ToolMeta> = {
         kvm: { type: 'boolean', description: 'Request KVM (/dev/kvm) — non-privileged, via the device plugin.', descriptions: { zh: '请求 KVM（/dev/kvm）——非特权，经 device plugin。' } },
         'gpu-count': int('Number of NVIDIA GPUs to request (0 = none; needs the GPU device plugin).', '请求的 NVIDIA GPU 卡数（0 = 无；需 GPU device plugin）。'),
         volumes: volumesSchema(),
+        ...tier0Schema(),
       },
       [],
     ),
@@ -1236,6 +1375,7 @@ const TOOL_META: Record<string, ToolMeta> = {
         kvm: { type: 'boolean', description: 'Request KVM (/dev/kvm) — non-privileged.', descriptions: { zh: '请求 KVM（/dev/kvm）——非特权。' } },
         'gpu-count': int('Number of NVIDIA GPUs to request (0 = none).', '请求的 NVIDIA GPU 卡数（0 = 无）。'),
         volumes: volumesSchema(),
+        ...tier0Schema(),
       },
       ['image'],
     ),

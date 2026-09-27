@@ -31,6 +31,7 @@ export async function serviceDeploy(
   const commandList = Array.isArray(command) ? command.filter((c): c is string => typeof c === 'string') : []
   const services = parseServices(args['services'])
   const volumes = parseVolumes(args['volumes'])
+  const tier0 = parseTier0(args)
   try {
     const res = await ctx.workspace.deployService(
       {
@@ -47,6 +48,7 @@ export async function serviceDeploy(
         gpuCount: Math.trunc(numArg(args, 'gpu-count') ?? 0),
         services,
         volumes,
+        ...tier0,
       },
       { headers: { 'X-Session-Name': ctx.session } },
     )
@@ -94,6 +96,169 @@ function parseVolumes(
       subPath: typeof o['sub-path'] === 'string' ? o['sub-path'] : typeof o['subPath'] === 'string' ? o['subPath'] : '',
     })
   }
+  return out
+}
+
+/** A parsed Tier 0 (single-Deployment enhancement) argument bundle. */
+interface Tier0Args {
+  resources?: {
+    cpu: string
+    memory: string
+    cpuLimit: string
+    memoryLimit: string
+  }
+  readinessProbe?: ProbeArgs
+  livenessProbe?: ProbeArgs
+  startupProbe?: ProbeArgs
+  rollout?: { maxSurge: string; maxUnavailable: string }
+  envRefs?: Array<{
+    name: string
+    configMap: string
+    configKey: string
+    secret: string
+    secretKey: string
+  }>
+  envFrom?: Array<{ configMap: string; secret: string }>
+  configMounts?: Array<{
+    configMap: string
+    secret: string
+    mountPath: string
+    items: Array<{ key: string; path: string }>
+  }>
+  sidecars?: Array<{
+    name: string
+    image: string
+    command: string[]
+    env: Record<string, string>
+    cpu: string
+    memory: string
+    init: boolean
+  }>
+  nodeSelector?: Record<string, string>
+  tolerations?: Array<{ key: string; operator: string; value: string; effect: string }>
+}
+
+interface ProbeArgs {
+  httpPath: string
+  httpPort: number
+  tcpPort: number
+  execCommand: string[]
+  initialDelaySeconds: number
+  periodSeconds: number
+  timeoutSeconds: number
+  failureThreshold: number
+  successThreshold: number
+}
+
+function strMap(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return out
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === 'string') out[k] = v
+  }
+  return out
+}
+
+function strList(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.filter((c): c is string => typeof c === 'string') : []
+}
+
+function objList(raw: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(raw)) return []
+  return raw.filter(
+    (x): x is Record<string, unknown> => x !== null && typeof x === 'object' && !Array.isArray(x),
+  )
+}
+
+function parseProbe(raw: unknown): ProbeArgs | undefined {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const o = raw as Record<string, unknown>
+  return {
+    httpPath: typeof o['http-path'] === 'string' ? o['http-path'] : '',
+    httpPort: Math.trunc(Number(o['http-port'] ?? 0)) || 0,
+    tcpPort: Math.trunc(Number(o['tcp-port'] ?? 0)) || 0,
+    execCommand: strList(o['exec-command']),
+    initialDelaySeconds: Math.trunc(Number(o['initial-delay-seconds'] ?? 0)) || 0,
+    periodSeconds: Math.trunc(Number(o['period-seconds'] ?? 0)) || 0,
+    timeoutSeconds: Math.trunc(Number(o['timeout-seconds'] ?? 0)) || 0,
+    failureThreshold: Math.trunc(Number(o['failure-threshold'] ?? 0)) || 0,
+    successThreshold: Math.trunc(Number(o['success-threshold'] ?? 0)) || 0,
+  }
+}
+
+/**
+ * Parse the optional Tier 0 arguments shared by service-deploy / service-preview
+ * into the gateway request fields. Every field is omitted when absent so a plain
+ * deploy request stays minimal.
+ */
+function parseTier0(args: Record<string, unknown>): Tier0Args {
+  const out: Tier0Args = {}
+  const res = args['resources']
+  if (res !== null && typeof res === 'object' && !Array.isArray(res)) {
+    const o = res as Record<string, unknown>
+    out.resources = {
+      cpu: typeof o['cpu'] === 'string' ? o['cpu'] : '',
+      memory: typeof o['memory'] === 'string' ? o['memory'] : '',
+      cpuLimit: typeof o['cpu-limit'] === 'string' ? o['cpu-limit'] : '',
+      memoryLimit: typeof o['memory-limit'] === 'string' ? o['memory-limit'] : '',
+    }
+  }
+  const rp = parseProbe(args['readiness-probe'])
+  if (rp) out.readinessProbe = rp
+  const lp = parseProbe(args['liveness-probe'])
+  if (lp) out.livenessProbe = lp
+  const sp = parseProbe(args['startup-probe'])
+  if (sp) out.startupProbe = sp
+  const ro = args['rollout']
+  if (ro !== null && typeof ro === 'object' && !Array.isArray(ro)) {
+    const o = ro as Record<string, unknown>
+    out.rollout = {
+      maxSurge: typeof o['max-surge'] === 'string' ? o['max-surge'] : '',
+      maxUnavailable: typeof o['max-unavailable'] === 'string' ? o['max-unavailable'] : '',
+    }
+  }
+  const er = objList(args['env-refs']).map(o => ({
+    name: typeof o['name'] === 'string' ? o['name'] : '',
+    configMap: typeof o['config-map'] === 'string' ? o['config-map'] : '',
+    configKey: typeof o['config-key'] === 'string' ? o['config-key'] : '',
+    secret: typeof o['secret'] === 'string' ? o['secret'] : '',
+    secretKey: typeof o['secret-key'] === 'string' ? o['secret-key'] : '',
+  }))
+  if (er.length) out.envRefs = er
+  const ef = objList(args['env-from']).map(o => ({
+    configMap: typeof o['config-map'] === 'string' ? o['config-map'] : '',
+    secret: typeof o['secret'] === 'string' ? o['secret'] : '',
+  }))
+  if (ef.length) out.envFrom = ef
+  const cm = objList(args['config-mounts']).map(o => ({
+    configMap: typeof o['config-map'] === 'string' ? o['config-map'] : '',
+    secret: typeof o['secret'] === 'string' ? o['secret'] : '',
+    mountPath: typeof o['mount-path'] === 'string' ? o['mount-path'] : '',
+    items: objList(o['items']).map(it => ({
+      key: typeof it['key'] === 'string' ? it['key'] : '',
+      path: typeof it['path'] === 'string' ? it['path'] : '',
+    })),
+  }))
+  if (cm.length) out.configMounts = cm
+  const sc = objList(args['sidecars']).map(o => ({
+    name: typeof o['name'] === 'string' ? o['name'] : '',
+    image: typeof o['image'] === 'string' ? o['image'] : '',
+    command: strList(o['command']),
+    env: strMap(o['env']),
+    cpu: typeof o['cpu'] === 'string' ? o['cpu'] : '',
+    memory: typeof o['memory'] === 'string' ? o['memory'] : '',
+    init: o['init'] === true,
+  }))
+  if (sc.length) out.sidecars = sc
+  const ns = strMap(args['node-selector'])
+  if (Object.keys(ns).length) out.nodeSelector = ns
+  const tol = objList(args['tolerations']).map(o => ({
+    key: typeof o['key'] === 'string' ? o['key'] : '',
+    operator: typeof o['operator'] === 'string' ? o['operator'] : '',
+    value: typeof o['value'] === 'string' ? o['value'] : '',
+    effect: typeof o['effect'] === 'string' ? o['effect'] : '',
+  }))
+  if (tol.length) out.tolerations = tol
   return out
 }
 
@@ -173,6 +338,7 @@ export async function servicePreview(
   const commandList = Array.isArray(command) ? command.filter((c): c is string => typeof c === 'string') : []
   const services = parseServices(args['services'])
   const volumes = parseVolumes(args['volumes'])
+  const tier0 = parseTier0(args)
   try {
     const res = await ctx.workspace.previewService(
       {
@@ -188,6 +354,7 @@ export async function servicePreview(
         services,
         ttlSeconds: Math.trunc(numArg(args, 'ttl-seconds') ?? 0),
         volumes,
+        ...tier0,
       },
       { headers: { 'X-Session-Name': ctx.session } },
     )
