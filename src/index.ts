@@ -676,12 +676,12 @@ const EXEC_WARNING_ZH =
  * the tool verifies before writing to prevent editing the wrong place.
  */
 const EDIT_DESC_EN =
-  'Edit a file by line numbers (1-based). end-line == start-line - 1 inserts before start-line; otherwise it replaces [start-line, end-line]. Line numbers are NEVER silently clamped: start-line may be (total + 1) to append at EOF, end-line == start-line - 1 inserts (including [1, 0] head insert and [total+1, total] tail append), and any other out-of-range value is rejected. ' +
-  'ANCHORS (required): pass start-anchor/end-anchor = your own copy of the CURRENT text of start-line/end-line, taken from read output with the line-number prefix removed. An anchor is required whenever its line exists in [1, total], and must be OMITTED when it does not (so a head insert needs only start-anchor, a tail append only end-anchor, and an empty file neither). The tool compares with trim() and REFUSES the edit (without writing) if either anchor does not match — this catches stale line numbers and prevents re-applying an already-applied edit. ' +
+  'Edit a file by line numbers (1-based). end-line == start-line - 1 inserts before start-line; otherwise it replaces [start-line, end-line] (both endpoints INCLUSIVE). Line numbers are NEVER silently clamped: start-line may be (total + 1) to append at EOF, end-line == start-line - 1 inserts (including [1, 0] head insert and [total+1, total] tail append), and any other out-of-range value is rejected. ' +
+  'ANCHORS (both required): anchor-before / anchor-after = your own copy of the CURRENT text of the UNCHANGED lines immediately OUTSIDE the edit region — the line ABOVE it (line start-line - 1) and the line BELOW it (line end-line + 1) — taken from read output with the line-number prefix removed. They are NOT the edited lines themselves. When a side does not exist (start-line == 1 has no line above; end-line == total has no line below; an empty file has neither) you MUST pass an empty string for that argument. The tool compares with trim() and REFUSES the edit (without writing) if either anchor does not match — this catches any line-count shift above or below the region before writing. ' +
   'The session must have read (or written) the file first, may only edit lines it has seen, and the file must be unchanged since that read. A successful edit requires a fresh read. Returns a one-line summary followed by a unified diff.'
 const EDIT_DESC_ZH =
-  '按行号（从 1 开始）编辑文件。end-line == start-line - 1 时在 start-line 前插入；否则替换 [start-line, end-line]。行号绝不静默夹取：start-line 可为（总行数 + 1）以在文件末尾追加，end-line == start-line - 1 表示插入（含 [1, 0] 文件头插入与 [总行数+1, 总行数] 文件尾追加），其他越界值一律拒绝。' +
-  'ANCHOR（必填）：start-anchor/end-anchor = 你对 start-line/end-line 当前原文的抄写（来自 read 输出，去掉行号前缀）。只要该行号在 [1, 总行数] 内就必须提供，不存在时必须省略（因此文件头插入只需 start-anchor，文件尾追加只需 end-anchor，空文件都不需要）。工具用 trim() 比对，任一 anchor 不匹配则拒绝编辑（不写盘）——这能发现过期的行号，并防止重复应用已完成的编辑。' +
+  '按行号（从 1 开始）编辑文件。end-line == start-line - 1 时在 start-line 前插入；否则替换 [start-line, end-line]（含首含尾）。行号绝不静默夹取：start-line 可为（总行数 + 1）以在文件末尾追加，end-line == start-line - 1 表示插入（含 [1, 0] 文件头插入与 [总行数+1, 总行数] 文件尾追加），其他越界值一律拒绝。' +
+  'ANCHOR（两个都必填）：anchor-before/anchor-after = 你对编辑区【外】紧邻的【不变】行的当前原文抄写——编辑区上方那行（第 start-line - 1 行）与下方那行（第 end-line + 1 行），来自 read 输出、去掉行号前缀。它们不是被编辑的行本身。某一侧不存在时（start-line == 1 无上方行；end-line == 总行数 无下方行；空文件两侧都没有），该参数必须传空字符串。工具用 trim() 比对，任一 anchor 不匹配则拒绝编辑（不写盘）——这能在写盘前发现编辑区上方或下方的任何行数位移。' +
   '会话必须先 read（或 write）过该文件，只能修改已“看到”的行，且文件自读取后不得变化。编辑成功后需重新 read。返回一行摘要及 unified diff。'
 
 /** The sandbox to run against (a name from sandbox-create / sandbox-list). */
@@ -908,10 +908,10 @@ const TOOL_META: Record<string, ToolMeta> = {
         'start-line': int('Start line (1-based).', '起始行（从 1 开始）。'),
         'end-line': int('End line (1-based, inclusive); == start-line - 1 means insert.', '结束行（从 1 开始，含端点）；等于 start-line - 1 表示插入。'),
         content: str('Replacement or inserted text.', '替换或插入的文本。'),
-        'start-anchor': str('Your copy of the CURRENT text of start-line (from read output, without the line-number prefix). Required when start-line is within [1, total]; omit when inserting past the last line.', '你对 start-line 当前原文的抄写（来自 read 输出，去掉行号前缀）。当 start-line 在 [1, 总行数] 内时必填；在末行之后插入时省略。'),
-        'end-anchor': str('Your copy of the CURRENT text of end-line (from read output, without the line-number prefix). Required when end-line is within [1, total]; omit when inserting before the first line.', '你对 end-line 当前原文的抄写（来自 read 输出，去掉行号前缀）。当 end-line 在 [1, 总行数] 内时必填；在首行之前插入时省略。'),
+        'anchor-before': str('Your copy of the CURRENT text of the UNCHANGED line ABOVE the edit region (line start-line - 1), from read output without the line-number prefix. NOT the edited line. Pass an empty string when start-line == 1 (no line above).', '你对编辑区上方那条【不变】行（第 start-line - 1 行）当前原文的抄写，来自 read 输出、去掉行号前缀。不是被编辑的行。start-line == 1（无上方行）时传空字符串。'),
+        'anchor-after': str('Your copy of the CURRENT text of the UNCHANGED line BELOW the edit region (line end-line + 1), from read output without the line-number prefix. NOT the edited line. Pass an empty string when end-line == total (no line below).', '你对编辑区下方那条【不变】行（第 end-line + 1 行）当前原文的抄写，来自 read 输出、去掉行号前缀。不是被编辑的行。end-line == 总行数（无下方行）时传空字符串。'),
       },
-      ['path', 'start-line', 'end-line'],
+      ['path', 'start-line', 'end-line', 'anchor-before', 'anchor-after'],
     ),
     required: SANDBOX_REQUIRED,
   },
@@ -1305,11 +1305,11 @@ const TOOL_META: Record<string, ToolMeta> = {
         'start-line': int('Start line (1-based).', '起始行（从 1 开始）。'),
         'end-line': int('End line (1-based, inclusive); == start-line - 1 means insert.', '结束行（从 1 开始，含端点）；等于 start-line - 1 表示插入。'),
         content: str('Replacement or inserted text.', '替换或插入的文本。'),
-        'start-anchor': str('Your copy of the CURRENT text of start-line (from repo-file-read output, without the line-number prefix). Required when start-line is within [1, total]; omit when inserting past the last line.', '你对 start-line 当前原文的抄写（来自 repo-file-read 输出，去掉行号前缀）。当 start-line 在 [1, 总行数] 内时必填；在末行之后插入时省略。'),
-        'end-anchor': str('Your copy of the CURRENT text of end-line (from repo-file-read output, without the line-number prefix). Required when end-line is within [1, total]; omit when inserting before the first line.', '你对 end-line 当前原文的抄写（来自 repo-file-read 输出，去掉行号前缀）。当 end-line 在 [1, 总行数] 内时必填；在首行之前插入时省略。'),
+        'anchor-before': str('Your copy of the CURRENT text of the UNCHANGED line ABOVE the edit region (line start-line - 1), from repo-file-read output without the line-number prefix. NOT the edited line. Pass an empty string when start-line == 1 (no line above).', '你对编辑区上方那条【不变】行（第 start-line - 1 行）当前原文的抄写，来自 repo-file-read 输出、去掉行号前缀。不是被编辑的行。start-line == 1（无上方行）时传空字符串。'),
+        'anchor-after': str('Your copy of the CURRENT text of the UNCHANGED line BELOW the edit region (line end-line + 1), from repo-file-read output without the line-number prefix. NOT the edited line. Pass an empty string when end-line == total (no line below).', '你对编辑区下方那条【不变】行（第 end-line + 1 行）当前原文的抄写，来自 repo-file-read 输出、去掉行号前缀。不是被编辑的行。end-line == 总行数（无下方行）时传空字符串。'),
         message: str('Commit message (defaults to "edit <path>").', '提交信息（默认 "edit <path>"）。'),
       },
-      ['org', 'repo', 'path', 'start-line', 'end-line'],
+      ['org', 'repo', 'path', 'start-line', 'end-line', 'anchor-before', 'anchor-after'],
     ),
     required: REPO_REQUIRED,
   },

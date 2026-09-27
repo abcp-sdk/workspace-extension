@@ -11,16 +11,18 @@ export function clip(s: string, n = 80): string {
 export function anchorError(
   locale: string,
   path: string,
-  kind: 'start' | 'end',
+  kind: 'before' | 'after',
   line: number,
   total: number,
   c: AnchorError,
 ): TypedToolError {
+  const kindSide = anchorSide(locale, kind)
   if (c.reason === 'missing') {
     return new TypedToolError(
       'retryable',
       tr(locale, 'editAnchorMissing', {
         kind,
+        kindSide,
         line,
         path,
         actual: clip(c.actual),
@@ -32,6 +34,7 @@ export function anchorError(
       'retryable',
       tr(locale, 'editAnchorMismatch', {
         kind,
+        kindSide,
         line,
         path,
         expected: clip(c.expected),
@@ -41,8 +44,15 @@ export function anchorError(
   }
   return new TypedToolError(
     'retryable',
-    tr(locale, 'editAnchorOutOfRange', { kind, line, path, total }),
+    tr(locale, 'editAnchorOutOfRange', { kind, kindSide, line, path, total }),
   )
+}
+
+/** Localized word for which side of the edit region an anchor guards. */
+function anchorSide(locale: string, kind: 'before' | 'after'): string {
+  const zh = locale.toLowerCase().startsWith('zh')
+  if (kind === 'before') return zh ? '上方' : 'above'
+  return zh ? '下方' : 'below'
 }
 
 /** Map a resolved-range failure to its localized `invalid_argument` error. */
@@ -76,6 +86,11 @@ export function rangeError(
 export function strArg(args: Record<string, unknown>, key: string): string {
   const v = args[key]
   return typeof v === 'string' ? v : ''
+}
+
+/** True when a key is PRESENT (even with an empty-string value). */
+export function hasArg(args: Record<string, unknown>, key: string): boolean {
+  return Object.hasOwn(args, key)
 }
 
 export function numArg(

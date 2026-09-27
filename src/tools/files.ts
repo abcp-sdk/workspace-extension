@@ -8,7 +8,7 @@ import {
   MAX_RESULT_LINES,
   truncationNote,
 } from './output.js'
-import { anchorError, baseName, numArg, rangeError, requireArg, strArg } from './shared.js'
+import { anchorError, baseName, hasArg, numArg, rangeError, requireArg, strArg } from './shared.js'
 import {
   checkAnchor,
   joinFileLines,
@@ -209,15 +209,17 @@ export async function writeFile(
  * `[1, 0]` head insert and the `[total+1, total]` tail append); any other
  * out-of-range value is rejected.
  *
- * ANCHORS: the caller must also pass `start-anchor` / `end-anchor` — its own
- * copy of the CURRENT text of the `start-line` / `end-line` (taken from `read`
- * output with the line-number prefix removed). An anchor is required whenever
- * its line exists in `[1, total]`, and must be omitted otherwise (so a head
- * insert needs only `start-anchor`, a tail append only `end-anchor`, and an
- * empty file neither). Comparison is `trim()`-based; a mismatch means the line
- * numbers no longer point where the caller believes, so the edit is refused
- * (retryable) WITHOUT writing. This is what stops editing the wrong place or
- * re-applying an already-applied edit.
+ * ANCHORS: the caller must also pass `anchor-before` / `anchor-after` — its
+ * own copy of the CURRENT text of the UNCHANGED lines immediately OUTSIDE the
+ * edit region: the line ABOVE it (line `start-line - 1`) and the line BELOW it
+ * (line `end-line + 1`), taken from `read` output with the line-number prefix
+ * removed. Both arguments are always required; when a side does not exist
+ * (start-line == 1 has no line above; end-line == total has no line below) the
+ * caller MUST pass an empty string. Comparison is `trim()`-based; a mismatch
+ * means the line numbers no longer point where the caller believes, so the
+ * edit is refused (retryable) WITHOUT writing. Because the anchors are the
+ * edit's unchanged neighbors, any line-count shift above or below the region
+ * is caught before writing.
  *
  * READ-BEFORE-EDIT: the session may only edit a file it has seen via `read`
  * (or written), only within the line ranges it has seen, and only while the
@@ -235,8 +237,19 @@ export async function editFile(
   const startLine = Math.trunc(numArg(args, 'start-line') ?? 0)
   const endLine = Math.trunc(numArg(args, 'end-line') ?? 0)
   const content = strArg(args, 'content')
-  const startAnchor = strArg(args, 'start-anchor')
-  const endAnchor = strArg(args, 'end-anchor')
+  const anchorBefore = strArg(args, 'anchor-before')
+  const anchorAfter = strArg(args, 'anchor-after')
+
+  // Both anchors are REQUIRED arguments (present, though possibly ""): a
+  // missing key is a caller error, not a silent empty anchor.
+  for (const key of ['anchor-before', 'anchor-after']) {
+    if (!hasArg(args, key)) {
+      throw new TypedToolError(
+        'invalid_argument',
+        tr(locale, 'editAnchorRequired', { key }),
+      )
+    }
+  }
 
   // ---- read-before-edit guard ----
   const state = await ctx.deps.loadEditState(ctx.tenant, ctx.session)
@@ -275,14 +288,19 @@ export async function editFile(
     throw rangeError(locale, path, total, resolved.reason, startLine, endLine)
   }
 
-  // Anchor validation: the caller's copy of the start/end line text must match.
-  const startCheck = checkAnchor(file.lines, startLine, startAnchor, total)
-  if (!startCheck.ok) {
-    throw anchorError(locale, path, 'start', startLine, total, startCheck)
+  // Anchor validation: the UNCHANGED lines just outside the edit region — the
+  // line ABOVE it (start-line - 1) and the line BELOW it (end-line + 1) — must
+  // match the caller's copy. A mismatch means the line numbers no longer point
+  // where the caller believes, so the edit is refused without writing.
+  const beforeLine = startLine - 1
+  const afterLine = endLine + 1
+  const beforeCheck = checkAnchor(file.lines, beforeLine, anchorBefore, total)
+  if (!beforeCheck.ok) {
+    throw anchorError(locale, path, 'before', beforeLine, total, beforeCheck)
   }
-  const endCheck = checkAnchor(file.lines, endLine, endAnchor, total)
-  if (!endCheck.ok) {
-    throw anchorError(locale, path, 'end', endLine, total, endCheck)
+  const afterCheck = checkAnchor(file.lines, afterLine, anchorAfter, total)
+  if (!afterCheck.ok) {
+    throw anchorError(locale, path, 'after', afterLine, total, afterCheck)
   }
 
   const { target } = resolved

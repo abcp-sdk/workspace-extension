@@ -22,7 +22,7 @@ import {
   touchedRange,
   windowLines,
 } from './text.js'
-import { anchorError, numArg, rangeError, requireArg, strArg } from './shared.js'
+import { anchorError, hasArg, numArg, rangeError, requireArg, strArg } from './shared.js'
 
 /** Everything a repo-* tool handler needs at call time. */
 export interface RepoCtx {
@@ -284,10 +284,16 @@ export async function repoEdit(
   const startLine = Math.trunc(numArg(args, 'start-line') ?? 0)
   const endLine = Math.trunc(numArg(args, 'end-line') ?? 0)
   const content = strArg(args, 'content')
-  const startAnchor = strArg(args, 'start-anchor')
-  const endAnchor = strArg(args, 'end-anchor')
+  const anchorBefore = strArg(args, 'anchor-before')
+  const anchorAfter = strArg(args, 'anchor-after')
   const message = strArg(args, 'message') || `edit ${path}`
   if (startLine < 1) throw new TypedToolError('invalid_argument', tr(ctx.locale, 'startLineMin'))
+  // Both anchors are REQUIRED arguments (present, though possibly "").
+  for (const key of ['anchor-before', 'anchor-after']) {
+    if (!hasArg(args, key)) {
+      throw new TypedToolError('invalid_argument', tr(ctx.locale, 'editAnchorRequired', { key }))
+    }
+  }
 
   const key = repoKey(r, path)
   const state = await ctx.deps.loadEditState(ctx.tenant, ctx.session)
@@ -307,11 +313,15 @@ export async function repoEdit(
   if (!resolved.ok) {
     throw rangeError(ctx.locale, path, total, resolved.reason, startLine, endLine)
   }
-  // Anchor validation: the caller's copy of the start/end line text must match.
-  const startCheck = checkAnchor(file.lines, startLine, startAnchor, total)
-  if (!startCheck.ok) throw anchorError(ctx.locale, path, 'start', startLine, total, startCheck)
-  const endCheck = checkAnchor(file.lines, endLine, endAnchor, total)
-  if (!endCheck.ok) throw anchorError(ctx.locale, path, 'end', endLine, total, endCheck)
+  // Anchor validation: the UNCHANGED lines just outside the edit region — the
+  // line ABOVE it (start-line - 1) and the line BELOW it (end-line + 1) — must
+  // match the caller's copy.
+  const beforeLine = startLine - 1
+  const afterLine = endLine + 1
+  const beforeCheck = checkAnchor(file.lines, beforeLine, anchorBefore, total)
+  if (!beforeCheck.ok) throw anchorError(ctx.locale, path, 'before', beforeLine, total, beforeCheck)
+  const afterCheck = checkAnchor(file.lines, afterLine, anchorAfter, total)
+  if (!afterCheck.ok) throw anchorError(ctx.locale, path, 'after', afterLine, total, afterCheck)
 
   const { target } = resolved
   let next: string[]
