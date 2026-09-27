@@ -8,14 +8,17 @@ import {
   MAX_RESULT_LINES,
   truncationNote,
 } from './output.js'
-import { baseName, numArg, requireArg, strArg } from './shared.js'
+import { anchorError, baseName, numArg, rangeError, requireArg, strArg } from './shared.js'
 import {
+  checkAnchor,
   joinFileLines,
   looksTextual,
   normalizeRel,
   numberLines,
+  resolveEditTarget,
   splitLines,
   toFileLines,
+  touchedRange,
 } from './text.js'
 import { unifiedDiff } from './diff.js'
 import {
@@ -199,10 +202,22 @@ export async function writeFile(
 
 /**
  * `edit`: line-oriented replace/insert over the SAME line model as `read`
- * (1-based, `[start-line, end-line]` inclusive). `end-line < start-line`
- * inserts before `start-line`. Out-of-range line numbers are CLAMPED to the
- * file (never appending a phantom blank line): `[10,12]` on a 10-line file
- * replaces line 10; on an 11-line file it replaces lines 10-11.
+ * (1-based, `[start-line, end-line]` inclusive). `end-line === start-line - 1`
+ * inserts before `start-line`; otherwise it replaces `[start-line, end-line]`.
+ * Line numbers are NEVER silently clamped: `start-line` may be `total + 1` to
+ * append at EOF, and `end-line === start-line - 1` inserts (including the
+ * `[1, 0]` head insert and the `[total+1, total]` tail append); any other
+ * out-of-range value is rejected.
+ *
+ * ANCHORS: the caller must also pass `start-anchor` / `end-anchor` — its own
+ * copy of the CURRENT text of the `start-line` / `end-line` (taken from `read`
+ * output with the line-number prefix removed). An anchor is required whenever
+ * its line exists in `[1, total]`, and must be omitted otherwise (so a head
+ * insert needs only `start-anchor`, a tail append only `end-anchor`, and an
+ * empty file neither). Comparison is `trim()`-based; a mismatch means the line
+ * numbers no longer point where the caller believes, so the edit is refused
+ * (retryable) WITHOUT writing. This is what stops editing the wrong place or
+ * re-applying an already-applied edit.
  *
  * READ-BEFORE-EDIT: the session may only edit a file it has seen via `read`
  * (or written), only within the line ranges it has seen, and only while the
@@ -220,10 +235,8 @@ export async function editFile(
   const startLine = Math.trunc(numArg(args, 'start-line') ?? 0)
   const endLine = Math.trunc(numArg(args, 'end-line') ?? 0)
   const content = strArg(args, 'content')
-
-  if (startLine < 1) {
-    throw new TypedToolError('invalid_argument', tr(locale, 'startLineMin'))
-  }
+  const startAnchor = strArg(args, 'start-anchor')
+  const endAnchor = strArg(args, 'end-anchor')
 
   // ---- read-before-edit guard ----
   const state = await ctx.deps.loadEditState(ctx.tenant, ctx.session)
@@ -256,22 +269,31 @@ export async function editFile(
   const total = file.lines.length
   const inserted = content === '' ? [] : toFileLines(content).lines
 
-  // The (clamped) line range this edit will touch, for the seen-range check.
-  let next: string[]
-  let touched: [number, number]
-  if (endLine < startLine) {
-    // Insert before start-line, clamped to [0, total]. Anchored at `startLine`
-    // (an empty file needs only a prior read, which `seen !== null` provides).
-    const at = Math.min(Math.max(startLine - 1, 0), total)
-    next = [...file.lines.slice(0, at), ...inserted, ...file.lines.slice(at)]
-    touched = total === 0 ? [0, -1] : [at + 1, at + 1]
-  } else {
-    // Replace [start-line, end-line], both clamped to the file end.
-    const s = Math.min(Math.max(startLine - 1, 0), total)
-    const e = Math.max(s, Math.min(endLine, total))
-    next = [...file.lines.slice(0, s), ...inserted, ...file.lines.slice(e)]
-    touched = [s + 1, e]
+  // Strict bounds (no silent clamping) — anchors depend on exact line numbers.
+  const resolved = resolveEditTarget(startLine, endLine, total)
+  if (!resolved.ok) {
+    throw rangeError(locale, path, total, resolved.reason, startLine, endLine)
   }
+
+  // Anchor validation: the caller's copy of the start/end line text must match.
+  const startCheck = checkAnchor(file.lines, startLine, startAnchor, total)
+  if (!startCheck.ok) {
+    throw anchorError(locale, path, 'start', startLine, total, startCheck)
+  }
+  const endCheck = checkAnchor(file.lines, endLine, endAnchor, total)
+  if (!endCheck.ok) {
+    throw anchorError(locale, path, 'end', endLine, total, endCheck)
+  }
+
+  const { target } = resolved
+  let next: string[]
+  if (target.kind === 'insert') {
+    const at = target.at
+    next = [...file.lines.slice(0, at), ...inserted, ...file.lines.slice(at)]
+  } else {
+    next = [...file.lines.slice(0, target.s), ...inserted, ...file.lines.slice(target.e)]
+  }
+  const touched = touchedRange(target, total)
 
   if (!rangesCover(seen.ranges, touched[0], touched[1])) {
     throw new TypedToolError(

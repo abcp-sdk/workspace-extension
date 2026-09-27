@@ -669,6 +669,21 @@ const EXEC_WARNING_ZH =
   '也请勿在前台运行常驻的守护进程/服务并指望调用立即返回。' +
   '请原样运行命令（worker 会流式记录 stdout/stderr），再用 job-output/job-wait 工具读取结果。'
 
+/**
+ * Shared description for the two line-based edit tools (`sandbox-file-edit` /
+ * `repo-file-edit`). Documents the strict line model and the anchor contract:
+ * anchors are the caller's own copy of the target line's current text, which
+ * the tool verifies before writing to prevent editing the wrong place.
+ */
+const EDIT_DESC_EN =
+  'Edit a file by line numbers (1-based). end-line == start-line - 1 inserts before start-line; otherwise it replaces [start-line, end-line]. Line numbers are NEVER silently clamped: start-line may be (total + 1) to append at EOF, end-line == start-line - 1 inserts (including [1, 0] head insert and [total+1, total] tail append), and any other out-of-range value is rejected. ' +
+  'ANCHORS (required): pass start-anchor/end-anchor = your own copy of the CURRENT text of start-line/end-line, taken from read output with the line-number prefix removed. An anchor is required whenever its line exists in [1, total], and must be OMITTED when it does not (so a head insert needs only start-anchor, a tail append only end-anchor, and an empty file neither). The tool compares with trim() and REFUSES the edit (without writing) if either anchor does not match — this catches stale line numbers and prevents re-applying an already-applied edit. ' +
+  'The session must have read (or written) the file first, may only edit lines it has seen, and the file must be unchanged since that read. A successful edit requires a fresh read. Returns a one-line summary followed by a unified diff.'
+const EDIT_DESC_ZH =
+  '按行号（从 1 开始）编辑文件。end-line == start-line - 1 时在 start-line 前插入；否则替换 [start-line, end-line]。行号绝不静默夹取：start-line 可为（总行数 + 1）以在文件末尾追加，end-line == start-line - 1 表示插入（含 [1, 0] 文件头插入与 [总行数+1, 总行数] 文件尾追加），其他越界值一律拒绝。' +
+  'ANCHOR（必填）：start-anchor/end-anchor = 你对 start-line/end-line 当前原文的抄写（来自 read 输出，去掉行号前缀）。只要该行号在 [1, 总行数] 内就必须提供，不存在时必须省略（因此文件头插入只需 start-anchor，文件尾追加只需 end-anchor，空文件都不需要）。工具用 trim() 比对，任一 anchor 不匹配则拒绝编辑（不写盘）——这能发现过期的行号，并防止重复应用已完成的编辑。' +
+  '会话必须先 read（或 write）过该文件，只能修改已“看到”的行，且文件自读取后不得变化。编辑成功后需重新 read。返回一行摘要及 unified diff。'
+
 /** The sandbox to run against (a name from sandbox-create / sandbox-list). */
 const WORKER_NAME = str(
   'Sandbox name to run against (from sandbox-create or sandbox-list).',
@@ -885,14 +900,16 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: SANDBOX_REQUIRED,
   },
   'sandbox-file-edit': {
-    description: 'Edit a sandbox file by line numbers (1-based). When end-line < start-line it inserts before start-line; otherwise it replaces [start-line, end-line]. Out-of-range line numbers are clamped. The session must have read (or written) the file first, and may only edit lines it has seen; the file must be unchanged since that read. A successful edit requires a fresh read. Returns a one-line summary followed by a unified diff.',
-    descriptions: { zh: '按行号（从 1 开始）编辑沙箱文件。end-line < start-line 时在 start-line 前插入；否则替换 [start-line, end-line]。越界行号会夹取到文件范围。会话必须先 read（或 write）过该文件，且只能修改已“看到”的行；文件自上次读取后不得变化。编辑成功后需重新 read。返回一行摘要及 unified diff。' },
+    description: EDIT_DESC_EN,
+    descriptions: { zh: EDIT_DESC_ZH },
     inputSchema: obj(
       {
         path: str('File path, relative to the workspace root.', '文件路径，相对于工作区根目录。'),
         'start-line': int('Start line (1-based).', '起始行（从 1 开始）。'),
-        'end-line': int('End line (1-based, inclusive); < start-line means insert.', '结束行（从 1 开始，含端点）；小于 start-line 表示插入。'),
+        'end-line': int('End line (1-based, inclusive); == start-line - 1 means insert.', '结束行（从 1 开始，含端点）；等于 start-line - 1 表示插入。'),
         content: str('Replacement or inserted text.', '替换或插入的文本。'),
+        'start-anchor': str('Your copy of the CURRENT text of start-line (from read output, without the line-number prefix). Required when start-line is within [1, total]; omit when inserting past the last line.', '你对 start-line 当前原文的抄写（来自 read 输出，去掉行号前缀）。当 start-line 在 [1, 总行数] 内时必填；在末行之后插入时省略。'),
+        'end-anchor': str('Your copy of the CURRENT text of end-line (from read output, without the line-number prefix). Required when end-line is within [1, total]; omit when inserting before the first line.', '你对 end-line 当前原文的抄写（来自 read 输出，去掉行号前缀）。当 end-line 在 [1, 总行数] 内时必填；在首行之前插入时省略。'),
       },
       ['path', 'start-line', 'end-line'],
     ),
@@ -1279,15 +1296,17 @@ const TOOL_META: Record<string, ToolMeta> = {
     required: REPO_REQUIRED,
   },
   'repo-file-edit': {
-    description: 'Edit a repository file by line numbers (1-based). The change is STAGED into the branch\'s staging commit (amending the open one, else opening a new one); finalize with repo-commit. end-line < start-line inserts; otherwise replaces [start-line, end-line]. Requires a prior repo-file-read of the file, only the seen lines may change, and the file must be unchanged since (blob sha). Returns a summary + unified diff.',
-    descriptions: { zh: '按行号（从 1 开始）编辑仓库文件。改动会暂存进分支的暂存提交（已有则 amend，否则新建），再用 repo-commit 最终提交。end-line < start-line 插入；否则替换 [start-line, end-line]。必须先 repo-file-read 过该文件，只能改已“看到”的行，且文件自读取后未变化（blob sha）。返回摘要 + unified diff。' },
+    description: 'The change is STAGED into the branch\'s staging commit (amending the open one, else opening a new one); finalize with repo-commit. ' + EDIT_DESC_EN + ' Requires a prior repo-file-read of the file; freshness is checked by blob sha.',
+    descriptions: { zh: '按行号（从 1 开始）编辑仓库文件。改动会暂存进分支的暂存提交（已有则 amend，否则新建），再用 repo-commit 最终提交。' + EDIT_DESC_ZH + ' 必须先 repo-file-read 过该文件；新鲜度以 blob sha 校验。' },
     inputSchema: obj(
       {
         ...REPO_ADDR,
         path: str('File path, relative to the repository root.', '文件路径，相对于仓库根目录。'),
         'start-line': int('Start line (1-based).', '起始行（从 1 开始）。'),
-        'end-line': int('End line (1-based, inclusive); < start-line means insert.', '结束行（从 1 开始，含端点）；小于 start-line 表示插入。'),
+        'end-line': int('End line (1-based, inclusive); == start-line - 1 means insert.', '结束行（从 1 开始，含端点）；等于 start-line - 1 表示插入。'),
         content: str('Replacement or inserted text.', '替换或插入的文本。'),
+        'start-anchor': str('Your copy of the CURRENT text of start-line (from repo-file-read output, without the line-number prefix). Required when start-line is within [1, total]; omit when inserting past the last line.', '你对 start-line 当前原文的抄写（来自 repo-file-read 输出，去掉行号前缀）。当 start-line 在 [1, 总行数] 内时必填；在末行之后插入时省略。'),
+        'end-anchor': str('Your copy of the CURRENT text of end-line (from repo-file-read output, without the line-number prefix). Required when end-line is within [1, total]; omit when inserting before the first line.', '你对 end-line 当前原文的抄写（来自 repo-file-read 输出，去掉行号前缀）。当 end-line 在 [1, 总行数] 内时必填；在首行之前插入时省略。'),
         message: str('Commit message (defaults to "edit <path>").', '提交信息（默认 "edit <path>"）。'),
       },
       ['org', 'repo', 'path', 'start-line', 'end-line'],

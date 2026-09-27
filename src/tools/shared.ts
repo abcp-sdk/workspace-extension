@@ -1,5 +1,76 @@
 import { TypedToolError } from '@abc-protocol/sdk'
 import { tr } from '../i18n.js'
+import type { AnchorError, EditRangeError } from './text.js'
+
+/** Clip long line text for an error message. */
+export function clip(s: string, n = 80): string {
+  return s.length > n ? `${s.slice(0, n)}…` : s
+}
+
+/** Build the typed error for a failed anchor check. */
+export function anchorError(
+  locale: string,
+  path: string,
+  kind: 'start' | 'end',
+  line: number,
+  total: number,
+  c: AnchorError,
+): TypedToolError {
+  if (c.reason === 'missing') {
+    return new TypedToolError(
+      'retryable',
+      tr(locale, 'editAnchorMissing', {
+        kind,
+        line,
+        path,
+        actual: clip(c.actual),
+      }),
+    )
+  }
+  if (c.reason === 'mismatch') {
+    return new TypedToolError(
+      'retryable',
+      tr(locale, 'editAnchorMismatch', {
+        kind,
+        line,
+        path,
+        expected: clip(c.expected),
+        actual: clip(c.actual),
+      }),
+    )
+  }
+  return new TypedToolError(
+    'retryable',
+    tr(locale, 'editAnchorOutOfRange', { kind, line, path, total }),
+  )
+}
+
+/** Map a resolved-range failure to its localized `invalid_argument` error. */
+export function rangeError(
+  locale: string,
+  path: string,
+  total: number,
+  reason: EditRangeError,
+  startLine: number,
+  endLine: number,
+): TypedToolError {
+  switch (reason) {
+    case 'startLineMin':
+      return new TypedToolError('invalid_argument', tr(locale, 'startLineMin'))
+    case 'endLineBeforeStart':
+      return new TypedToolError('invalid_argument', tr(locale, 'editEndLineBeforeStart'))
+    case 'startLinePastEnd':
+      return new TypedToolError(
+        'invalid_argument',
+        tr(locale, 'editStartLinePastEnd', { start: startLine, path, total }),
+      )
+    case 'endLinePastEnd':
+      return new TypedToolError(
+        'invalid_argument',
+        tr(locale, 'editEndLinePastEnd', { end: endLine, path, total }),
+      )
+  }
+}
 
 /** Read a string tool argument (missing/typed wrong = ""). */
 export function strArg(args: Record<string, unknown>, key: string): string {

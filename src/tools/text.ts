@@ -99,3 +99,82 @@ export function normalizeRel(p: string): string {
   while (s.endsWith('/') && s.length > 1) s = s.slice(0, -1)
   return s
 }
+
+/** Why an edit's line bounds were rejected. */
+export type EditRangeError =
+  | 'startLineMin'
+  | 'endLineBeforeStart'
+  | 'startLinePastEnd'
+  | 'endLinePastEnd'
+
+/** The resolved 0-based edit target over a file's line model. */
+export type EditTarget =
+  | { kind: 'insert'; at: number }
+  | { kind: 'replace'; s: number; e: number }
+
+/**
+ * Resolve an edit's `[start-line, end-line]` against a file of `total` lines
+ * into a concrete target, WITHOUT silently clamping (anchors require exact
+ * line numbers). Two modes:
+ *  - INSERT: `end-line === start-line - 1` inserts before `start-line`
+ *    (`start-line` may be `total + 1` to append at EOF; `1` to prepend).
+ *  - REPLACE: `end-line >= start-line`, both within `[1, total]`.
+ * Anything else is an error (never a silent clamp).
+ */
+export function resolveEditTarget(
+  startLine: number,
+  endLine: number,
+  total: number,
+): { ok: true; target: EditTarget } | { ok: false; reason: EditRangeError } {
+  if (startLine < 1) return { ok: false, reason: 'startLineMin' }
+  if (endLine === startLine - 1) {
+    if (startLine > total + 1) return { ok: false, reason: 'startLinePastEnd' }
+    return { ok: true, target: { kind: 'insert', at: startLine - 1 } }
+  }
+  if (endLine < startLine - 1) return { ok: false, reason: 'endLineBeforeStart' }
+  if (startLine > total) return { ok: false, reason: 'startLinePastEnd' }
+  if (endLine > total) return { ok: false, reason: 'endLinePastEnd' }
+  return { ok: true, target: { kind: 'replace', s: startLine - 1, e: endLine } }
+}
+
+/** The 1-based inclusive line range an edit target "touches", for the
+ *  read-before-edit guard. Insert touches its neighboring existing lines (so
+ *  appending requires the last line to have been read); an empty file touches
+ *  nothing. */
+export function touchedRange(target: EditTarget, total: number): [number, number] {
+  if (target.kind === 'replace') return [target.s + 1, target.e]
+  const at = target.at
+  return [Math.max(1, at), Math.min(total, at + 1)]
+}
+
+/** Why an anchor failed to validate. */
+export type AnchorError =
+  | { reason: 'missing'; actual: string }
+  | { reason: 'mismatch'; actual: string; expected: string }
+  | { reason: 'outOfRange' }
+
+/**
+ * Validate an `anchor` (the caller's copy of a line's text) against line
+ * `line` (1-based) of `lines`. An empty `anchor` means "omitted": it is
+ * required when the line exists and forbidden when it does not. Comparison is
+ * `trim()`-based, so indentation/whitespace transcription slips are tolerated
+ * while the actual content must still match.
+ */
+export function checkAnchor(
+  lines: readonly string[],
+  line: number,
+  anchor: string,
+  total: number,
+): { ok: true } | ({ ok: false } & AnchorError) {
+  const exists = line >= 1 && line <= total
+  if (!exists) {
+    return anchor.trim() === ''
+      ? { ok: true }
+      : { ok: false, reason: 'outOfRange' }
+  }
+  const actual = lines[line - 1] ?? ''
+  if (anchor.trim() === '') return { ok: false, reason: 'missing', actual }
+  return actual.trim() === anchor.trim()
+    ? { ok: true }
+    : { ok: false, reason: 'mismatch', actual, expected: anchor }
+}

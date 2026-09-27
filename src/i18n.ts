@@ -307,6 +307,30 @@ export const CATALOG = {
     en: 'start-line must be >= 1',
     zh: 'start-line 必须 >= 1。',
   },
+  editEndLineBeforeStart: {
+    en: 'end-line must be >= start-line - 1 (use end-line = start-line - 1 to insert)',
+    zh: 'end-line 必须 >= start-line - 1（插入请用 end-line = start-line - 1）。',
+  },
+  editStartLinePastEnd: {
+    en: "start-line {start} is past the end of '{path}' ({total} lines); the largest valid start-line is {total} for a replace or {total} + 1 for an append.",
+    zh: "'{path}' 只有 {total} 行，start-line {start} 越界；替换最大为 {total}，追加最大为 {total} + 1。",
+  },
+  editEndLinePastEnd: {
+    en: "end-line {end} is past the end of '{path}' ({total} lines); use the last line number ({total}) or fewer.",
+    zh: "'{path}' 只有 {total} 行，end-line {end} 越界；请不超过最后一行（{total}）。",
+  },
+  editAnchorMissing: {
+    en: "{kind}-anchor is required for line {line} of '{path}' (that line is: {actual}). Copy it from read output (without the line-number prefix).",
+    zh: "'{path}' 的第 {line} 行需要 {kind}-anchor（该行内容：{actual}）。请从 read 输出中原样抄写（去掉行号前缀）。",
+  },
+  editAnchorMismatch: {
+    en: "{kind}-anchor for line {line} of '{path}' does not match: expected {expected}, found {actual}. The file or line numbers changed; call read again.",
+    zh: "'{path}' 第 {line} 行的 {kind}-anchor 不匹配：期望 {expected}，实际 {actual}。文件或行号已变化；请重新 read。",
+  },
+  editAnchorOutOfRange: {
+    en: "{kind}-anchor was given for line {line}, which does not exist in '{path}' ({total} lines); omit it for insertions at the head/tail.",
+    zh: "'{path}'（{total} 行）中不存在第 {line} 行，不应提供 {kind}-anchor；在文件头/尾插入时应省略。",
+  },
   mailBranchMissing: {
     en: "branch '{branch}' does not exist in the repository (branch <-> session is 1:1)",
     zh: "仓库中不存在分支 '{branch}'（分支与会话一一对应）。",

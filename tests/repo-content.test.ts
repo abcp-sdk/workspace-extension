@@ -64,7 +64,7 @@ describe('repo read-before-edit guard', () => {
     const c = ctx(forgejo)
     await repoWrite(c, { org: 'o', repo: 'r', path: 'a.txt', content: '1\n2\n3\n' })
     // write marks seen with sha '', so a fresh read is needed for freshness.
-    const err = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 2, 'end-line': 2, content: 'X' }).catch(e => e)
+    const err = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 2, 'end-line': 2, content: 'X', 'start-anchor': '2', 'end-anchor': '2' }).catch(e => e)
     expect(err).toBeInstanceOf(TypedToolError)
     // After a write the seen sha is '' which won't match the blob -> retryable
     // (or permission_denied if never recorded). Either way: refused.
@@ -79,15 +79,15 @@ describe('repo read-before-edit guard', () => {
     // Read only lines 2-3.
     await repoRead(c, { org: 'o', repo: 'r', path: 'a.txt', offset: 1, limit: 2 })
     // Editing line 5 is refused.
-    const err = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 5, 'end-line': 5, content: 'X' }).catch(e => e)
+    const err = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 5, 'end-line': 5, content: 'X', 'start-anchor': '5', 'end-anchor': '5' }).catch(e => e)
     expect((err as TypedToolError).code).toBe('permission_denied')
 
     // Editing lines 2-3 succeeds and invalidates.
-    await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 2, 'end-line': 3, content: 'X' })
+    await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 2, 'end-line': 3, content: 'X', 'start-anchor': '2', 'end-anchor': '3' })
     expect(files.get('a.txt')!.text).toBe('1\nX\n4\n5\n')
 
     // Second edit without re-read is refused.
-    const err2 = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 2, 'end-line': 2, content: 'Y' }).catch(e => e)
+    const err2 = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 2, 'end-line': 2, content: 'Y', 'start-anchor': 'X', 'end-anchor': 'X' }).catch(e => e)
     expect((err2 as TypedToolError).code).toBe('permission_denied')
   })
 
@@ -97,7 +97,7 @@ describe('repo read-before-edit guard', () => {
     files.set('a.txt', { text: '1\n2\n', sha: 's1' })
     await repoRead(c, { org: 'o', repo: 'r', path: 'a.txt' })
     files.set('a.txt', { text: '1\nCHANGED\n', sha: 's2' })
-    const err = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 2, 'end-line': 2, content: 'X' }).catch(e => e)
+    const err = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 2, 'end-line': 2, content: 'X', 'start-anchor': '2', 'end-anchor': '2' }).catch(e => e)
     expect((err as TypedToolError).code).toBe('retryable')
   })
 
@@ -106,10 +106,29 @@ describe('repo read-before-edit guard', () => {
     const c = ctx(forgejo)
     files.set('a.txt', { text: '1\n2\n3\n', sha: 's1' })
     await repoRead(c, { org: 'o', repo: 'r', path: 'a.txt' })
-    const r = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 2, 'end-line': 2, content: 'X' })
+    const r = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 2, 'end-line': 2, content: 'X', 'start-anchor': '2', 'end-anchor': '2' })
     expect(r.content).toContain('--- a/a.txt')
     expect(r.content).toContain('-2')
     expect(r.content).toContain('+X')
+  })
+
+  it('rejects a mismatched anchor (no commit)', async () => {
+    const { files, forgejo } = fakeRepo()
+    const c = ctx(forgejo)
+    files.set('a.txt', { text: 'alpha\nbeta\n', sha: 's1' })
+    await repoRead(c, { org: 'o', repo: 'r', path: 'a.txt' })
+    const err = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 2, 'end-line': 2, content: 'X', 'start-anchor': 'WRONG', 'end-anchor': 'beta' }).catch(e => e)
+    expect((err as TypedToolError).code).toBe('retryable')
+    expect(files.get('a.txt')!.text).toBe('alpha\nbeta\n')
+  })
+
+  it('appends at the tail with only an end-anchor', async () => {
+    const { files, forgejo } = fakeRepo()
+    const c = ctx(forgejo)
+    files.set('a.txt', { text: '1\n2\n', sha: 's1' })
+    await repoRead(c, { org: 'o', repo: 'r', path: 'a.txt' })
+    await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 3, 'end-line': 2, content: '3', 'end-anchor': '2' })
+    expect(files.get('a.txt')!.text).toBe('1\n2\n3\n')
   })
 })
 

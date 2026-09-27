@@ -13,8 +13,16 @@ import {
   recordSeen,
   seenFor,
 } from './edit-state.js'
-import { joinFileLines, numberLines, toFileLines, windowLines } from './text.js'
-import { numArg, requireArg, strArg } from './shared.js'
+import {
+  checkAnchor,
+  joinFileLines,
+  numberLines,
+  resolveEditTarget,
+  toFileLines,
+  touchedRange,
+  windowLines,
+} from './text.js'
+import { anchorError, numArg, rangeError, requireArg, strArg } from './shared.js'
 
 /** Everything a repo-* tool handler needs at call time. */
 export interface RepoCtx {
@@ -276,6 +284,8 @@ export async function repoEdit(
   const startLine = Math.trunc(numArg(args, 'start-line') ?? 0)
   const endLine = Math.trunc(numArg(args, 'end-line') ?? 0)
   const content = strArg(args, 'content')
+  const startAnchor = strArg(args, 'start-anchor')
+  const endAnchor = strArg(args, 'end-anchor')
   const message = strArg(args, 'message') || `edit ${path}`
   if (startLine < 1) throw new TypedToolError('invalid_argument', tr(ctx.locale, 'startLineMin'))
 
@@ -291,18 +301,27 @@ export async function repoEdit(
   const file = toFileLines(got.text)
   const total = file.lines.length
   const inserted = content === '' ? [] : toFileLines(content).lines
-  let next: string[]
-  let touched: [number, number]
-  if (endLine < startLine) {
-    const at = Math.min(Math.max(startLine - 1, 0), total)
-    next = [...file.lines.slice(0, at), ...inserted, ...file.lines.slice(at)]
-    touched = total === 0 ? [0, -1] : [at + 1, at + 1]
-  } else {
-    const s = Math.min(Math.max(startLine - 1, 0), total)
-    const e = Math.max(s, Math.min(endLine, total))
-    next = [...file.lines.slice(0, s), ...inserted, ...file.lines.slice(e)]
-    touched = [s + 1, e]
+
+  // Strict bounds (no silent clamping) — anchors depend on exact line numbers.
+  const resolved = resolveEditTarget(startLine, endLine, total)
+  if (!resolved.ok) {
+    throw rangeError(ctx.locale, path, total, resolved.reason, startLine, endLine)
   }
+  // Anchor validation: the caller's copy of the start/end line text must match.
+  const startCheck = checkAnchor(file.lines, startLine, startAnchor, total)
+  if (!startCheck.ok) throw anchorError(ctx.locale, path, 'start', startLine, total, startCheck)
+  const endCheck = checkAnchor(file.lines, endLine, endAnchor, total)
+  if (!endCheck.ok) throw anchorError(ctx.locale, path, 'end', endLine, total, endCheck)
+
+  const { target } = resolved
+  let next: string[]
+  if (target.kind === 'insert') {
+    const at = target.at
+    next = [...file.lines.slice(0, at), ...inserted, ...file.lines.slice(at)]
+  } else {
+    next = [...file.lines.slice(0, target.s), ...inserted, ...file.lines.slice(target.e)]
+  }
+  const touched = touchedRange(target, total)
   if (!rangesCover(seen.ranges, touched[0], touched[1])) {
     throw new TypedToolError(
       'permission_denied',
