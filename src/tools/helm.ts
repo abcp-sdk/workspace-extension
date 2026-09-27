@@ -22,6 +22,10 @@ export async function helmDeploy(
   if (release === '') throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'release' }))
   if (org === '' || repo === '') throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: org === '' ? 'org' : 'repo' }))
   const dryRun = args['dry-run'] === true
+  const slot = strArg(args, 'slot')
+  if (slot !== '' && slot !== 'blue' && slot !== 'green') {
+    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'helmSlotInvalid'))
+  }
   try {
     const res = await ctx.workspace.helmDeploy(
       {
@@ -32,6 +36,7 @@ export async function helmDeploy(
         chartPath: strArg(args, 'chart-path'),
         values: strArg(args, 'values'),
         dryRun,
+        slot,
       },
       { headers: { 'X-Session-Name': ctx.session } },
     )
@@ -42,15 +47,60 @@ export async function helmDeploy(
       }
     }
     const r = res.release
+    const slotNote = (r?.slots ?? []).length
+      ? '\n' + (r?.slots ?? []).map(sl => tr(ctx.locale, 'helmSlotLine', {
+          slot: sl.slot, ready: sl.ready ? 'ready' : 'not-ready', count: `${sl.readyWorkload}/${sl.totalWorkload}`,
+          active: sl.slot === r?.activeSlot ? ' *' : '',
+        })).join('\n')
+      : ''
     return {
-      content: tr(ctx.locale, 'helmDeployed', { release: r?.name ?? release, revision: r?.revision ?? 0 }),
+      content: tr(ctx.locale, 'helmDeployed', { release: r?.name ?? release, revision: r?.revision ?? 0 }) + slotNote,
       data: {
         name: r?.name ?? release, revision: r?.revision ?? 0, status: r?.status ?? '',
-        ref: r?.ref ?? '', chart_path: r?.chartPath ?? '', objects: res.objects,
+        ref: r?.ref ?? '', chart_path: r?.chartPath ?? '', slot: r?.slot ?? '', active_slot: r?.activeSlot ?? '',
+        objects: res.objects,
+        slots: (r?.slots ?? []).map(sl => ({ slot: sl.slot, release: sl.release, ready: sl.ready, ready_workload: sl.readyWorkload, total_workload: sl.totalWorkload })),
       },
     }
   } catch (e) {
     throw new TypedToolError('internal', tr(ctx.locale, 'helmFailed', { op: 'helm-deploy', err: String(e) }))
+  }
+}
+
+/** `helm-promote`: switch a blue-green release's router to the other slot. */
+export async function helmPromote(
+  ctx: HelmCtx,
+  args: Record<string, unknown>,
+): Promise<ToolResultData> {
+  const release = strArg(args, 'release')
+  if (release === '') throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'release' }))
+  const force = args['force'] === true
+  try {
+    const res = await ctx.workspace.helmPromote({ release, force })
+    return {
+      content: tr(ctx.locale, 'helmPromoted', { release, slot: res.release?.activeSlot ?? '' }),
+      data: { release, active_slot: res.release?.activeSlot ?? '' },
+    }
+  } catch (e) {
+    throw new TypedToolError('retryable', tr(ctx.locale, 'helmFailed', { op: 'helm-promote', err: String(e) }))
+  }
+}
+
+/** `helm-rollback-release`: switch a blue-green release's router back a slot. */
+export async function helmRollbackRelease(
+  ctx: HelmCtx,
+  args: Record<string, unknown>,
+): Promise<ToolResultData> {
+  const release = strArg(args, 'release')
+  if (release === '') throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'release' }))
+  try {
+    const res = await ctx.workspace.helmRollbackRelease({ release })
+    return {
+      content: tr(ctx.locale, 'helmRolledBackSlot', { release, slot: res.release?.activeSlot ?? '' }),
+      data: { release, active_slot: res.release?.activeSlot ?? '' },
+    }
+  } catch (e) {
+    throw new TypedToolError('retryable', tr(ctx.locale, 'helmFailed', { op: 'helm-rollback-release', err: String(e) }))
   }
 }
 
@@ -62,10 +112,15 @@ export async function helmList(
   const res = await ctx.workspace.helmList({})
   const rels = res.releases
   if (rels.length === 0) return { content: tr(ctx.locale, 'helmNone') }
-  const lines = rels.map(r => `${r.name}  rev${r.revision}  [${r.status}]  ${r.chartPath || '.'}@${r.ref || 'HEAD'}  session=${r.session || '-'}`)
+  const lines = rels.map(r => {
+    const slots = (r.slots ?? []).length
+      ? `  slots=${(r.slots ?? []).map(sl => `${sl.slot}${sl.slot === r.activeSlot ? '*' : ''}(${sl.ready ? 'ready' : 'not-ready'})`).join(',')}`
+      : ''
+    return `${r.name}  rev${r.revision}  [${r.status}]  ${r.chartPath || '.'}@${r.ref || 'HEAD'}${slots}  session=${r.session || '-'}`
+  })
   return {
     content: tr(ctx.locale, 'helmListHeader', { count: rels.length }) + '\n' + lines.join('\n'),
-    data: { count: rels.length, releases: rels.map(r => ({ name: r.name, revision: r.revision, status: r.status, ref: r.ref, chart_path: r.chartPath, session: r.session })) },
+    data: { count: rels.length, releases: rels.map(r => ({ name: r.name, revision: r.revision, status: r.status, ref: r.ref, chart_path: r.chartPath, session: r.session, active_slot: r.activeSlot, slots: (r.slots ?? []).map(sl => ({ slot: sl.slot, ready: sl.ready, ready_workload: sl.readyWorkload, total_workload: sl.totalWorkload })) })) },
   }
 }
 

@@ -245,6 +245,22 @@ export const CATALOG = {
     en: "Helm release '{release}' not found.",
     zh: "未找到 Helm release '{release}'。",
   },
+  helmSlotLine: {
+    en: "Slot {slot}: {ready} ({count}){active}",
+    zh: "槽位 {slot}：{ready}（{count}）{active}",
+  },
+  helmSlotInvalid: {
+    en: "slot must be 'blue' or 'green'",
+    zh: "slot 必须为 'blue' 或 'green'。",
+  },
+  helmPromoted: {
+    en: "Promoted Helm release '{release}': the router now targets the {slot} slot.",
+    zh: "已提升 Helm release '{release}'：路由器现指向 {slot} 槽位。",
+  },
+  helmRolledBackSlot: {
+    en: "Rolled back Helm release '{release}': the router now targets the {slot} slot.",
+    zh: "已回滚 Helm release '{release}'：路由器现指向 {slot} 槽位。",
+  },
   serviceNone: {
     en: 'No services.',
     zh: '没有服务。',

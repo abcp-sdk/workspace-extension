@@ -120,7 +120,9 @@ import {
   helmDeploy,
   helmHistory,
   helmList,
+  helmPromote,
   helmRollback,
+  helmRollbackRelease,
   helmUninstall,
   type HelmCtx,
 } from './tools/helm.js'
@@ -510,6 +512,8 @@ export function createWorkspaceConfig(
     'helm-history': helmWrap(helmHistory),
     'helm-rollback': helmWrap(helmRollback),
     'helm-uninstall': helmWrap(helmUninstall),
+    'helm-promote': helmWrap(helmPromote),
+    'helm-rollback-release': helmWrap(helmRollbackRelease),
     'pvc-create': pvcWrap(pvcCreate),
     'pvc-list': pvcWrap(pvcList),
     'pvc-delete': pvcWrap(pvcDelete),
@@ -1462,10 +1466,34 @@ const TOOL_META: Record<string, ToolMeta> = {
         'chart-path': str('Repo-relative chart directory (holds Chart.yaml; default ".").', '仓库内 chart 目录（含 Chart.yaml；默认 "."）。'),
         values: str('values.yaml content.', 'values.yaml 内容。'),
         'dry-run': { type: 'boolean', description: 'Render + validate only (no apply).', descriptions: { zh: '仅渲染+校验（不应用）。' } },
+        slot: {
+          type: 'string',
+          enum: ['blue', 'green'],
+          description: 'Blue-green slot (empty = a plain release). A slot deploy stores the release as <release>-<slot> and creates/keeps a router Service <release>; the router targets the ACTIVE slot. Deploy green, verify, then helm-promote.',
+          descriptions: { zh: '蓝绿槽位（空 = 普通 release）。槽位部署会把 release 存为 <release>-<slot>，并创建/保留路由器 Service <release>；路由器指向当前 ACTIVE 槽。先部署 green、验证后再 helm-promote。' },
+        },
       },
       ['release', 'org', 'repo'],
     ),
     required: REPO_REQUIRED,
+  },
+  'helm-promote': {
+    description: 'Blue-green Helm promotion: switch the release\'s router Service to the non-active slot (blue<->green). By default the target slot must be fully ready; force=true overrides. helm-rollback-release switches back.',
+    descriptions: { zh: '蓝绿 Helm 提升：把 release 的路由器 Service 切到当前非 ACTIVE 的槽（blue<->green）。默认要求目标槽全部就绪；force=true 可强制。helm-rollback-release 可切回。' },
+    inputSchema: obj(
+      {
+        release: str('Release (router) name.', 'Release（路由器）名称。'),
+        force: { type: 'boolean', description: 'Promote even if the target slot is not fully ready.', descriptions: { zh: '即使目标槽未全部就绪也强制提升。' } },
+      },
+      ['release'],
+    ),
+    required: SANDBOX_REQUIRED,
+  },
+  'helm-rollback-release': {
+    description: 'Blue-green Helm rollback: switch the release\'s router Service back to the other slot (the inverse of helm-promote). Distinct from helm-rollback, which re-applies a chart revision.',
+    descriptions: { zh: '蓝绿 Helm 回滚：把 release 的路由器 Service 切回另一个槽（helm-promote 的逆操作）。与 helm-rollback（重新应用某个 chart revision）不同。' },
+    inputSchema: obj({ release: str('Release (router) name.', 'Release（路由器）名称。') }, ['release']),
+    required: SANDBOX_REQUIRED,
   },
   'helm-list': {
     description: 'List the Helm releases this tenant deployed (name, revision, status, chart path/ref).',
