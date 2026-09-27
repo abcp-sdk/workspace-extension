@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { TypedToolError } from '@abc-protocol/sdk'
 import {
   checkAnchor,
+  expandTilde,
   looksTextual,
   numberLines,
   resolveEditTarget,
@@ -105,6 +106,23 @@ describe('text helpers', () => {
 
   it('numbers lines from an absolute start', () => {
     expect(numberLines(['x', 'y'], 10)).toEqual(['10  x', '11  y'])
+  })
+
+  it('expands a leading ~ against home (falls back to workspace)', () => {
+    const a = { home: '/root', workspace: '/root/workspace' }
+    expect(expandTilde('~', a)).toBe('/root')
+    expect(expandTilde('~/', a)).toBe('/root')
+    expect(expandTilde('~/x/y', a)).toBe('/root/x/y')
+    expect(expandTilde('~/workspace/a.txt', a)).toBe('/root/workspace/a.txt')
+    // no tilde: unchanged
+    expect(expandTilde('/abs/x', a)).toBe('/abs/x')
+    expect(expandTilde('rel/x', a)).toBe('rel/x')
+    // `~user` is NOT supported: stays literal
+    expect(expandTilde('~bob/x', a)).toBe('~bob/x')
+    // home empty -> fall back to workspace
+    expect(expandTilde('~/x', { home: '', workspace: '/ws' })).toBe('/ws/x')
+    // both empty -> unchanged (cannot expand)
+    expect(expandTilde('~/x', { home: '', workspace: '' })).toBe('~/x')
   })
 
   it('resolves replace targets strictly (no clamping)', () => {

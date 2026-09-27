@@ -25,6 +25,10 @@ export const CATALOG = {
     en: 'workspace: {path}',
     zh: '工作区：{path}',
   },
+  infoHome: {
+    en: 'home (~): {path}',
+    zh: '主目录（~）：{path}',
+  },
   infoService: {
     en: 'service: {url}',
     zh: '服务：{url}',

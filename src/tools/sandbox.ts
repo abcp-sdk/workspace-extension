@@ -32,6 +32,8 @@ export interface WorkerInfo {
   arch: string
   shell: string
   workspace: string
+  /** The worker user's home dir (where `~` resolves); may be ''. */
+  home: string
   bootId: string
 }
 
@@ -41,17 +43,20 @@ export function renderInfo(
   info: WorkerInfo,
   domain: string,
 ): { text: string; data: Record<string, unknown> } {
+  const home = info.home ?? ''
+  const homeLine = home !== '' ? `\n${tr(locale, 'infoHome', { path: home })}` : ''
   const text =
     tr(locale, 'infoHeader', { os: info.os, arch: info.arch, shell: info.shell }) +
     '\n' +
     tr(locale, 'infoWorkspace', { path: info.workspace }) +
+    homeLine +
     '\n' +
     tr(locale, 'infoService', { url: domain }) +
     '\n' +
     tr(locale, 'infoBoot', { id: info.bootId })
   return {
     text,
-    data: { os: info.os, arch: info.arch, shell: info.shell, workspace: info.workspace, url: domain, boot_id: info.bootId },
+    data: { os: info.os, arch: info.arch, shell: info.shell, workspace: info.workspace, home, url: domain, boot_id: info.bootId },
   }
 }
 

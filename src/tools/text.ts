@@ -100,6 +100,33 @@ export function normalizeRel(p: string): string {
   return s
 }
 
+/** Join a slash path, collapsing boundary slashes (`a/` + `/b` => `a/b`). */
+function joinSlash(base: string, rest: string): string {
+  const b = base.replace(/\/+$/, '')
+  const r = rest.replace(/^\/+/, '')
+  if (b === '') return `/${r}`
+  return r === '' ? b : `${b}/${r}`
+}
+
+/**
+ * Expand a leading `~` in a worker path: `~` / `~/` => the worker's HOME, and
+ * `~/x` => `<HOME>/x`. The worker itself does NOT expand `~` (it treats a
+ * relative path as literal), so the tool layer does it here, matching the
+ * sandbox file browser. `home` falls back to `workspace` when the platform has
+ * no home concept. A path that is not `~` / `~/...` is returned UNCHANGED
+ * (including `~user`, which is not supported and stays a literal name).
+ */
+export function expandTilde(
+  p: string,
+  anchors: { home: string; workspace: string },
+): string {
+  if (p !== '~' && p !== '~/' && !p.startsWith('~/')) return p
+  const base = anchors.home !== '' ? anchors.home : anchors.workspace
+  if (base === '') return p
+  if (p === '~' || p === '~/') return base
+  return joinSlash(base, p.slice(2))
+}
+
 /** Why an edit's line bounds were rejected. */
 export type EditRangeError =
   | 'startLineMin'

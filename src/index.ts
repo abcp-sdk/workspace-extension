@@ -11,6 +11,7 @@ import {
   type WorkerClient,
   WorkerClientCache,
   WorkerResolver,
+  workerAnchors,
   type GatewayClient,
 } from './client.js'
 import { agentFileDeps, type WorkspaceDeps } from './deps.js'
@@ -26,7 +27,7 @@ import {
 } from './config.js'
 import { localeOf, tr } from './i18n.js'
 import { materializeLifecycle, parseSessionName } from './tools/lifecycle.js'
-import { domainOf, strArg } from './tools/shared.js'
+import { domainOf, expandPathArgs, strArg } from './tools/shared.js'
 import {
   deleteFile,
   downloadFile,
@@ -231,10 +232,12 @@ export function createWorkspaceConfig(
       const t = tenant ?? ''
       const s = sessionName ?? ''
       const locale = await localeOf(deps, t, s)
-      const client = await resolveWorkerClient(args ?? {}, s, t, locale)
+      const a = args ?? {}
+      const client = await resolveWorkerClient(a, s, t, locale)
+      const expanded = expandPathArgs(a, PATH_KEYS, await workerAnchors(client))
       return fn(
         { client, locale, ...(signal !== undefined ? { signal } : {}) },
-        args ?? {},
+        expanded,
       )
     }
 
@@ -250,8 +253,13 @@ export function createWorkspaceConfig(
       const t = tenant ?? ''
       const s = sessionName ?? ''
       const locale = await localeOf(deps, t, s)
-      const client = await resolveWorkerClient(args ?? {}, s, t, locale)
-      return fn({ client, deps, tenant: t, session: s, locale }, args ?? {})
+      const a = args ?? {}
+      const client = await resolveWorkerClient(a, s, t, locale)
+      // `~` is a client-side alias: expand it against the worker's home before
+      // the path reaches the worker (which does not expand it).
+      const anchors = await workerAnchors(client)
+      const expanded = expandPathArgs(a, PATH_KEYS, anchors)
+      return fn({ client, deps, tenant: t, session: s, locale }, expanded)
     }
   }
 
@@ -410,7 +418,9 @@ export function createWorkspaceConfig(
       const t = tenant ?? ''
       const s = sessionName ?? ''
       const locale = await localeOf(deps, t, s)
-      const client = await resolveWorkerClient(args ?? {}, s, t, locale)
+      const a = args ?? {}
+      const client = await resolveWorkerClient(a, s, t, locale)
+      const expanded = expandPathArgs(a, PATH_KEYS, await workerAnchors(client))
       const ref = branchRefOf(s)
       return fn(
         {
@@ -418,7 +428,7 @@ export function createWorkspaceConfig(
           ...(ref !== null ? { branch: ref.branch } : {}),
           fanout: (org, repo, branch, newRev) => fanout(s, t, locale, org, repo, branch, newRev),
         },
-        args ?? {},
+        expanded,
       )
     }
 
@@ -656,6 +666,17 @@ const volumesSchema = (): Record<string, unknown> => ({
  * tracked background task and records its output, so shell-level backgrounding
  * and output redirection actively break observability.
  */
+/**
+ * Sandbox (worker) path arguments that accept a leading `~` alias for the
+ * worker's HOME. Expanded client-side before the call (the worker does not
+ * expand `~`). Repo paths (`repo-*`) are repository-relative and are NOT here.
+ */
+const PATH_KEYS = ['path', 'dest', 'from', 'to', 'workdir'] as const
+
+/** Suffix appended to sandbox-path descriptions documenting the `~` alias. */
+const TILDE_EN = " A leading `~` or `~/...` expands to the worker's home dir (see sandbox-info)."
+const TILDE_ZH = ' 以 `~` 或 `~/...` 开头会展开为 worker 主目录（见 sandbox-info）。'
+
 const EXEC_WARNING_EN =
   'IMPORTANT: the remote worker runs every command as a background job and records its full output. ' +
   'Do NOT background the command yourself with &, nohup, setsid, disown, or `&` in a subshell; ' +
@@ -763,8 +784,8 @@ const TOOL_META: Record<string, ToolMeta> = {
 
   // ================= sandbox-* =================
   'sandbox-info': {
-    description: 'Show the sandbox environment: OS/arch, shell, workspace root, in-cluster service DNS and boot id.',
-    descriptions: { zh: '查看沙箱环境：OS/架构、shell、工作区根目录、集群内服务域名与 boot id。' },
+    description: 'Show the sandbox environment: OS/arch, shell, workspace root, home dir (`~`), in-cluster service DNS and boot id. File tools accept a leading `~` as an alias for this home dir.',
+    descriptions: { zh: '查看沙箱环境：OS/架构、shell、工作区根目录、主目录（`~`）、集群内服务域名与 boot id。文件工具的 `~` 前缀即指该主目录。' },
     inputSchema: obj({}),
     required: SANDBOX_REQUIRED,
   },
@@ -779,7 +800,7 @@ const TOOL_META: Record<string, ToolMeta> = {
     inputSchema: obj(
       {
         command: str('Shell command to run. ' + EXEC_WARNING_EN, '要运行的 shell 命令。' + EXEC_WARNING_ZH),
-        workdir: str('Working directory, relative to the workspace root.', '工作目录，相对于工作区根目录。'),
+        workdir: str('Working directory: relative to the workspace root, absolute, or starting with `~` (the worker home).'+TILDE_EN, '工作目录：相对工作区根、绝对路径，或以 `~`（worker 主目录）开头。'+TILDE_ZH),
         timeout: int('Synchronous wait ceiling in seconds (default 5, max 60).', '同步等待上限（秒，默认 5，最大 60）。'),
         env: {
           type: 'object',
@@ -803,7 +824,7 @@ const TOOL_META: Record<string, ToolMeta> = {
     inputSchema: obj(
       {
         command: str('Shell command to run. ' + EXEC_WARNING_EN, '要运行的 shell 命令。' + EXEC_WARNING_ZH),
-        workdir: str('Working directory, relative to the workspace root.', '工作目录，相对于工作区根目录。'),
+        workdir: str('Working directory: relative to the workspace root, absolute, or starting with `~` (the worker home).'+TILDE_EN, '工作目录：相对工作区根、绝对路径，或以 `~`（worker 主目录）开头。'+TILDE_ZH),
         env: {
           type: 'object',
           description: 'Extra environment variables for the job.',
@@ -879,7 +900,7 @@ const TOOL_META: Record<string, ToolMeta> = {
     descriptions: { zh: '从沙箱工作区读取文本文件并带行号，通过 offset/limit 分窗（窗口在服务端获取，大文件只取所需片段）。二进制文件会被拒绝。读取会记录已“看到”的行，之后 sandbox-file-edit 才能修改这些行。' },
     inputSchema: obj(
       {
-        path: str('File path, relative to the workspace root.', '文件路径，相对于工作区根目录。'),
+        path: str('File path: relative to the workspace root, absolute, or starting with `~` (the worker home).'+TILDE_EN, '文件路径：相对工作区根、绝对路径，或以 `~`（worker 主目录）开头。'+TILDE_ZH),
         offset: int('Start line (0-based, default 0).', '起始行（从 0 开始，默认 0）。'),
         limit: int('Maximum lines (default 200, max 1000).', '最多行数（默认 200，最大 1000）。'),
       },
@@ -892,7 +913,7 @@ const TOOL_META: Record<string, ToolMeta> = {
     descriptions: { zh: '向沙箱工作区写入（覆盖）文本文件，随后返回带行号的全文件。内容超过 120 KiB 会被拒绝。整个文件视为已“看到”。' },
     inputSchema: obj(
       {
-        path: str('File path, relative to the workspace root.', '文件路径，相对于工作区根目录。'),
+        path: str('File path: relative to the workspace root, absolute, or starting with `~` (the worker home).'+TILDE_EN, '文件路径：相对工作区根、绝对路径，或以 `~`（worker 主目录）开头。'+TILDE_ZH),
         content: str('Full file content.', '完整文件内容。'),
       },
       ['path', 'content'],
@@ -904,7 +925,7 @@ const TOOL_META: Record<string, ToolMeta> = {
     descriptions: { zh: EDIT_DESC_ZH },
     inputSchema: obj(
       {
-        path: str('File path, relative to the workspace root.', '文件路径，相对于工作区根目录。'),
+        path: str('File path: relative to the workspace root, absolute, or starting with `~` (the worker home).'+TILDE_EN, '文件路径：相对工作区根、绝对路径，或以 `~`（worker 主目录）开头。'+TILDE_ZH),
         'start-line': int('Start line (1-based).', '起始行（从 1 开始）。'),
         'end-line': int('End line (1-based, inclusive); == start-line - 1 means insert.', '结束行（从 1 开始，含端点）；等于 start-line - 1 表示插入。'),
         content: str('Replacement or inserted text.', '替换或插入的文本。'),
@@ -920,7 +941,7 @@ const TOOL_META: Record<string, ToolMeta> = {
     descriptions: { zh: '以树形（第 1..depth 层）列出沙箱路径并显示大小，单次服务端递归列出。超过上限的目录保持折叠。' },
     inputSchema: obj(
       {
-        path: str('Directory or file path, relative to the workspace root.', '目录或文件路径，相对于工作区根目录。'),
+        path: str('Directory or file path: relative to the workspace root, absolute, or starting with `~` (the worker home).'+TILDE_EN, '目录或文件路径：相对工作区根、绝对路径，或以 `~`（worker 主目录）开头。'+TILDE_ZH),
         limit: int('Maximum entries (default 200, max 1000).', '最大条目数（默认 200，最大 1000）。'),
         depth: int('Levels to expand (default 3).', '展开层数（默认 3）。'),
       },
@@ -933,7 +954,7 @@ const TOOL_META: Record<string, ToolMeta> = {
     descriptions: { zh: '从沙箱工作区删除文件或目录树（递归）。其读前编辑状态会被清除。' },
     inputSchema: obj(
       {
-        path: str('File or directory path, relative to the workspace root.', '文件或目录路径，相对于工作区根目录。'),
+        path: str('File or directory path: relative to the workspace root, absolute, or starting with `~` (the worker home).'+TILDE_EN, '文件或目录路径：相对工作区根、绝对路径，或以 `~`（worker 主目录）开头。'+TILDE_ZH),
       },
       ['path'],
     ),
@@ -945,7 +966,7 @@ const TOOL_META: Record<string, ToolMeta> = {
     inputSchema: obj(
       {
         code: str('File code (with or without the `file:` prefix).', '文件 code（可带或不带 `file:` 前缀）。'),
-        path: str('Destination path in the workspace.', '工作区中的目标路径。'),
+        path: str('Destination path in the workspace (relative, absolute, or starting with `~`).'+TILDE_EN, '工作区中的目标路径（相对、绝对，或以 `~` 开头）。'+TILDE_ZH),
       },
       ['code', 'path'],
     ),
@@ -956,7 +977,7 @@ const TOOL_META: Record<string, ToolMeta> = {
     descriptions: { zh: '将沙箱文件上传到 agent 文件存储，返回 `file:<code>`。内容类型由 agent 推断。' },
     inputSchema: obj(
       {
-        path: str('File path, relative to the workspace root.', '文件路径，相对于工作区根目录。'),
+        path: str('File path: relative to the workspace root, absolute, or starting with `~` (the worker home).'+TILDE_EN, '文件路径：相对工作区根、绝对路径，或以 `~`（worker 主目录）开头。'+TILDE_ZH),
         name: str('Stored file name (defaults to the basename).', '存储文件名（默认取 basename）。'),
       },
       ['path'],
@@ -969,7 +990,7 @@ const TOOL_META: Record<string, ToolMeta> = {
     inputSchema: obj(
       {
         ...REPO_ADDR,
-        dest: str('Workspace-relative destination directory (default: workspace root).', '工作区内的目标目录（默认：工作区根目录）。'),
+        dest: str('Destination directory: relative to the workspace root, absolute, or starting with `~` (default: workspace root).'+TILDE_EN, '目标目录：相对工作区根、绝对路径，或以 `~` 开头（默认：工作区根目录）。'+TILDE_ZH),
         clean: {
           type: 'boolean',
           description: 'Empty the destination before unpacking (default false).',
@@ -986,7 +1007,7 @@ const TOOL_META: Record<string, ToolMeta> = {
     inputSchema: obj(
       {
         ...REPO_ADDR,
-        path: str('Sandbox path (file or directory), relative to the workspace root.', '沙箱路径（文件或目录），相对于工作区根目录。'),
+        path: str('Sandbox path (file or directory): relative to the workspace root, absolute, or starting with `~`.'+TILDE_EN, '沙箱路径（文件或目录）：相对工作区根、绝对路径，或以 `~` 开头。'+TILDE_ZH),
         'repo-path': str('REQUIRED. Destination path inside the repository (relative to the repo root).', '必传。仓库内目标路径（相对仓库根）。'),
         message: str('Commit message.', '提交信息。'),
       },
