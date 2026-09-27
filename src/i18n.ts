@@ -181,6 +181,30 @@ export const CATALOG = {
     en: "Public URL (anonymous): {url}",
     zh: "公开地址（匿名可访问）：{url}",
   },
+  serviceSlotLine: {
+    en: "Slot {slot}: {url}{active}",
+    zh: "槽位 {slot}：{url}{active}",
+  },
+  serviceSlotInvalid: {
+    en: "slot must be 'blue' or 'green'",
+    zh: "slot 必须为 'blue' 或 'green'。",
+  },
+  servicePromoted: {
+    en: "Promoted '{name}': the primary URL now targets the {slot} slot.",
+    zh: "已提升 '{name}'：主地址现指向 {slot} 槽位。",
+  },
+  servicePromoteFailed: {
+    en: "service-promote '{name}' failed: {err}",
+    zh: "service-promote '{name}' 失败：{err}",
+  },
+  serviceRolledBack: {
+    en: "Rolled back '{name}': the primary URL now targets the {slot} slot.",
+    zh: "已回滚 '{name}'：主地址现指向 {slot} 槽位。",
+  },
+  serviceRollbackFailed: {
+    en: "service-rollback '{name}' failed: {err}",
+    zh: "service-rollback '{name}' 失败：{err}",
+  },
   serviceDeployFailed: {
     en: 'service-deploy failed: {err}',
     zh: 'service-deploy 失败：{err}',

@@ -32,6 +32,10 @@ export async function serviceDeploy(
   const services = parseServices(args['services'])
   const volumes = parseVolumes(args['volumes'])
   const tier0 = parseTier0(args)
+  const slot = strArg(args, 'slot')
+  if (slot !== '' && slot !== 'blue' && slot !== 'green') {
+    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'serviceSlotInvalid'))
+  }
   try {
     const res = await ctx.workspace.deployService(
       {
@@ -48,6 +52,7 @@ export async function serviceDeploy(
         gpuCount: Math.trunc(numArg(args, 'gpu-count') ?? 0),
         services,
         volumes,
+        slot,
         ...tier0,
       },
       { headers: { 'X-Session-Name': ctx.session } },
@@ -63,17 +68,69 @@ export async function serviceDeploy(
     const note = publics.length
       ? '\n' + publics.map(u => tr(ctx.locale, 'servicePublicUrl', { url: u })).join('\n')
       : ''
+    const slotNote = (s.slots ?? []).length
+      ? '\n' + (s.slots ?? []).map(sl => tr(ctx.locale, 'serviceSlotLine', {
+          slot: sl.slot, url: sl.publicUrl || sl.url, active: sl.slot === s.activeSlot ? ' *' : '',
+        })).join('\n')
+      : ''
     return {
-      content: tr(ctx.locale, 'serviceDeployed', { name: s.name, image: s.image, url: s.url }) + note,
+      content: tr(ctx.locale, 'serviceDeployed', { name: s.name, image: s.image, url: s.url }) + note + slotNote,
       data: {
         name: s.name, image: s.image, url: s.url,
         public_url: publics[0] ?? '', public_urls: publics,
         ports: (s.ports ?? []).map(p => ({ name: p.name, preset: p.preset, port: p.port, protocol: p.protocol, target_port: p.targetPort, public_url: p.publicUrl })),
         phase: s.phase, ready: s.ready, replicas: s.replicas,
+        active_slot: s.activeSlot,
+        slots: (s.slots ?? []).map(sl => ({ slot: sl.slot, image: sl.image, ready: sl.ready, replicas: sl.replicas, ready_replicas: sl.readyReplicas, url: sl.url, public_url: sl.publicUrl })),
       },
     }
   } catch (e) {
     throw new TypedToolError('internal', tr(ctx.locale, 'serviceDeployFailed', { err: String(e) }))
+  }
+}
+
+/** `service-promote`: switch a blue-green service's primary URL to the other slot. */
+export async function servicePromote(
+  ctx: ServiceCtx,
+  args: Record<string, unknown>,
+): Promise<ToolResultData> {
+  const name = strArg(args, 'name')
+  if (name === '') throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'name' }))
+  const force = args['force'] === true
+  try {
+    const res = await ctx.workspace.promoteService({ name, force })
+    const s = res.service
+    if (s === undefined) {
+      throw new TypedToolError('internal', tr(ctx.locale, 'serviceDeployFailed', { err: 'no service in response' }))
+    }
+    return {
+      content: tr(ctx.locale, 'servicePromoted', { name: s.name, slot: s.activeSlot }),
+      data: { name: s.name, active_slot: s.activeSlot, image: s.image, ready: s.ready, url: s.url, public_url: s.publicUrl },
+    }
+  } catch (e) {
+    throw new TypedToolError('retryable', tr(ctx.locale, 'servicePromoteFailed', { name, err: String(e) }))
+  }
+}
+
+/** `service-rollback`: switch a blue-green service's primary URL back a slot. */
+export async function serviceRollback(
+  ctx: ServiceCtx,
+  args: Record<string, unknown>,
+): Promise<ToolResultData> {
+  const name = strArg(args, 'name')
+  if (name === '') throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'name' }))
+  try {
+    const res = await ctx.workspace.rollbackService({ name })
+    const s = res.service
+    if (s === undefined) {
+      throw new TypedToolError('internal', tr(ctx.locale, 'serviceDeployFailed', { err: 'no service in response' }))
+    }
+    return {
+      content: tr(ctx.locale, 'serviceRolledBack', { name: s.name, slot: s.activeSlot }),
+      data: { name: s.name, active_slot: s.activeSlot, image: s.image, ready: s.ready, url: s.url, public_url: s.publicUrl },
+    }
+  } catch (e) {
+    throw new TypedToolError('retryable', tr(ctx.locale, 'serviceRollbackFailed', { name, err: String(e) }))
   }
 }
 
@@ -291,10 +348,14 @@ export async function serviceList(
     const ports = (s.ports ?? [])
       .map(p => `${p.protocol}:${p.port}${p.name ? `(${p.name})` : ''}->${p.targetPort}`)
       .join(',')
+    const slots = (s.slots ?? []).length
+      ? `  slots=${(s.slots ?? []).map(sl => `${sl.slot}${sl.slot === s.activeSlot ? '*' : ''}(${sl.ready ? 'ready' : 'not-ready'})`).join(',')}`
+      : ''
     return (
       `${s.name}  [${s.phase}${s.ready ? ', ready' : ''}]  ${s.image}  ${s.url}  x${s.replicas}` +
       (ports ? `  ports=${ports}` : '') +
       (publics.length ? `  public=${publics.join(',')}` : '') +
+      slots +
       `  session=${s.session || '-'}`
     )
   })
@@ -313,6 +374,8 @@ export async function serviceList(
         ready_replicas: s.readyReplicas,
         ready: s.ready,
         publicUrl: (s.ports ?? []).filter(p => p.publicUrl).map(p => p.publicUrl)[0] ?? '',
+        active_slot: s.activeSlot,
+        slots: (s.slots ?? []).map(sl => ({ slot: sl.slot, image: sl.image, ready: sl.ready, replicas: sl.replicas, ready_replicas: sl.readyReplicas, url: sl.url, public_url: sl.publicUrl })),
       })),
     },
   }

@@ -82,6 +82,8 @@ const EXPECTED_TOOLS = [
   'service-list',
   'service-logs',
   'service-preview',
+  'service-promote',
+  'service-rollback',
   'pvc-create',
   'pvc-list',
   'pvc-delete',

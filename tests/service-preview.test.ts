@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { repoBuildPreview } from '../src/tools/imagebuild.js'
-import { serviceDeploy, serviceLogs, servicePreview } from '../src/tools/services.js'
+import { serviceDeploy, serviceLogs, servicePreview, servicePromote, serviceRollback } from '../src/tools/services.js'
 import type { ServiceCtx } from '../src/tools/services.js'
 import type { BuildCtx } from '../src/tools/imagebuild.js'
 
@@ -179,5 +179,45 @@ describe('service-deploy Tier 0', () => {
     expect(req['resources']).toBeUndefined()
     expect(req['readinessProbe']).toBeUndefined()
     expect(req['sidecars']).toBeUndefined()
+  })
+})
+
+describe('service-promote / service-rollback', () => {
+  function slotCtx() {
+    const calls: unknown[] = []
+    const c = {
+      workspace: {
+        async promoteService(r: unknown) {
+          calls.push(r)
+          return { service: { name: 'web', image: 'img:green', activeSlot: 'green', url: 'http://web:80', publicUrl: 'https://web.worker.d' } }
+        },
+        async rollbackService(r: unknown) {
+          calls.push(r)
+          return { service: { name: 'web', image: 'img:blue', activeSlot: 'blue', url: 'http://web:80', publicUrl: 'https://web.worker.d' } }
+        },
+      },
+      session: 't:r:b',
+      locale: 'en',
+    } as unknown as ServiceCtx
+    return { c, calls }
+  }
+
+  it('promotes and reports the new active slot', async () => {
+    const { c, calls } = slotCtx()
+    const res = await servicePromote(c, { name: 'web', force: true })
+    expect(calls[0]).toMatchObject({ name: 'web', force: true })
+    expect(res.data).toMatchObject({ active_slot: 'green', image: 'img:green' })
+  })
+
+  it('rolls back and reports the active slot', async () => {
+    const { c, calls } = slotCtx()
+    const res = await serviceRollback(c, { name: 'web' })
+    expect(calls[0]).toMatchObject({ name: 'web' })
+    expect(res.data).toMatchObject({ active_slot: 'blue' })
+  })
+
+  it('requires a name', async () => {
+    const { c } = slotCtx()
+    await expect(servicePromote(c, {})).rejects.toThrow(/name/)
   })
 })

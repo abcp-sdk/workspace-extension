@@ -106,6 +106,8 @@ import {
   serviceList,
   serviceLogs,
   servicePreview,
+  servicePromote,
+  serviceRollback,
   type ServiceCtx,
 } from './tools/services.js'
 import {
@@ -478,6 +480,8 @@ export function createWorkspaceConfig(
 
     // ---- services (long-lived Deployments) ----
     'service-deploy': serviceWrap(serviceDeploy),
+    'service-promote': serviceWrap(servicePromote),
+    'service-rollback': serviceWrap(serviceRollback),
     'service-preview': serviceWrap(servicePreview),
     'service-list': serviceWrap(serviceList),
     'service-delete': serviceWrap(serviceDelete),
@@ -1333,10 +1337,34 @@ const TOOL_META: Record<string, ToolMeta> = {
         kvm: { type: 'boolean', description: 'Request KVM (/dev/kvm) — non-privileged, via the device plugin.', descriptions: { zh: '请求 KVM（/dev/kvm）——非特权，经 device plugin。' } },
         'gpu-count': int('Number of NVIDIA GPUs to request (0 = none; needs the GPU device plugin).', '请求的 NVIDIA GPU 卡数（0 = 无；需 GPU device plugin）。'),
         volumes: volumesSchema(),
+        slot: {
+          type: 'string',
+          enum: ['blue', 'green'],
+          description: 'Blue-green slot (default blue). Blue is the stable slot; green is the candidate. The primary URL always targets the ACTIVE slot; each slot also has its own address. Deploy green, verify it, then service-promote.',
+          descriptions: { zh: '蓝绿槽位（默认 blue）。blue 为稳定槽；green 为候选槽。主地址始终指向当前 ACTIVE 槽；每个槽另有独立地址。先部署 green、验证后再 service-promote。' },
+        },
         ...tier0Schema(),
       },
       [],
     ),
+    required: SANDBOX_REQUIRED,
+  },
+  'service-promote': {
+    description: 'Blue-green promotion: switch the service\'s primary URL to the non-active slot (blue<->green). By default the target slot must be fully ready; set force=true to override. Use after deploying and verifying the green slot. RollbackService switches back.',
+    descriptions: { zh: '蓝绿提升：把服务主地址切到当前非 ACTIVE 的槽（blue<->green）。默认要求目标槽全部就绪；force=true 可强制。用于部署并验证 green 之后。service-rollback 可切回。' },
+    inputSchema: obj(
+      {
+        name: str('Service name.', '服务名。'),
+        force: { type: 'boolean', description: 'Promote even if the target slot is not fully ready.', descriptions: { zh: '即使目标槽未全部就绪也强制提升。' } },
+      },
+      ['name'],
+    ),
+    required: SANDBOX_REQUIRED,
+  },
+  'service-rollback': {
+    description: 'Blue-green rollback: switch the service\'s primary URL back to the other slot (the inverse of service-promote).',
+    descriptions: { zh: '蓝绿回滚：把服务主地址切回另一个槽（service-promote 的逆操作）。' },
+    inputSchema: obj({ name: str('Service name.', '服务名。') }, ['name']),
     required: SANDBOX_REQUIRED,
   },
   'service-list': {
