@@ -39,13 +39,15 @@ export function anchorError(
   c: AnchorError,
 ): TypedToolError {
   const kindSide = anchorSide(locale, kind)
-  if (c.reason === 'missing') {
-    return new TypedToolError(
-      'retryable',
-      tr(locale, 'editAnchorMissing', { kind, kindSide, line, path, actual: clip(c.actual) }),
-    )
-  }
   if (c.reason === 'mismatch') {
+    // A blank expected anchor against a non-blank line is the common "forgot to
+    // copy the line" slip: say so plainly instead of "expected , found X".
+    if (c.expected.trim() === '') {
+      return new TypedToolError(
+        'retryable',
+        tr(locale, 'editAnchorEmpty', { kind, kindSide, line, path, actual: clip(c.actual) }),
+      )
+    }
     return new TypedToolError(
       'retryable',
       tr(locale, 'editAnchorMismatch', {

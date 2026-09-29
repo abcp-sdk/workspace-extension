@@ -300,6 +300,19 @@ describe('edit (anchor lines + anchor content)', () => {
     expect(decode(files)).toBe('alpha\nbeta\ngamma\n')
   })
 
+  it('refuses a non-blank anchor line given an empty anchor', async () => {
+    const files = { 'a.txt': enc('alpha\nbeta\n') }
+    const err = await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': '', 'end-anchor': '', content: 'X' }).catch(e => e)
+    expect((err as TypedToolError).code).toBe('retryable')
+    expect(decode(files)).toBe('alpha\nbeta\n')
+  })
+
+  it('accepts an empty anchor when the anchor line itself is blank', async () => {
+    const files = { 'a.txt': enc('alpha\n\nbeta\n') }
+    await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 2, 'end-anchor-line': 4, 'start-anchor': '', 'end-anchor': '', content: 'BETA' })
+    expect(decode(files)).toBe('alpha\n\nBETA\n')
+  })
+
   it('returns a unified diff', async () => {
     const files = { 'a.txt': enc('1\n2\n3\n4') }
     const r = await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 4, 'start-anchor': '1', 'end-anchor': '4', content: 'X' })

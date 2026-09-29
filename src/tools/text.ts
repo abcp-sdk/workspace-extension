@@ -210,16 +210,16 @@ export function applyEdit(
 
 /** Why an anchor's content failed to validate. */
 export type AnchorError =
-  | { reason: 'missing'; actual: string }
   | { reason: 'mismatch'; actual: string; expected: string }
   | { reason: 'outOfRange' }
 
 /**
  * Validate an `anchor` (the caller's copy of an anchor line's text) against
- * line `line` (1-based) of `lines`. An EMPTY `anchor` means "this boundary does
- * not exist": it is required when the line EXISTS and forbidden when it does
- * not. Comparison is `trim()`-based, so indentation/whitespace transcription
- * slips are tolerated while the actual content must still match.
+ * line `line` (1-based) of `lines`. A line that does NOT exist (head/tail) must
+ * be given as an empty `anchor`; a line that DOES exist must match its text —
+ * and a BLANK line's text is itself the empty string, so `""` is the correct
+ * anchor there too. Comparison is `trim()`-based, so indentation/whitespace
+ * transcription slips are tolerated while the content must still match.
  */
 export function checkAnchor(
   lines: readonly string[],
@@ -234,7 +234,6 @@ export function checkAnchor(
       : { ok: false, reason: 'outOfRange' }
   }
   const actual = lines[line - 1] ?? ''
-  if (anchor.trim() === '') return { ok: false, reason: 'missing', actual }
   return actual.trim() === anchor.trim()
     ? { ok: true }
     : { ok: false, reason: 'mismatch', actual, expected: anchor }

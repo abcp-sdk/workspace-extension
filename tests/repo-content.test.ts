@@ -117,6 +117,14 @@ describe('repo anchor-line edit', () => {
     expect(files.get('a.txt')!.text).toBe('alpha\nbeta\n')
   })
 
+  it('accepts an empty anchor when the anchor line itself is blank', async () => {
+    const { files, forgejo } = fakeRepo()
+    const c = ctx(forgejo)
+    files.set('a.txt', { text: 'alpha\n\nbeta\n', sha: 'base' })
+    await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 2, 'end-anchor-line': 4, 'start-anchor': '', 'end-anchor': '', content: 'BETA' })
+    expect(files.get('a.txt')!.text).toBe('alpha\n\nBETA\n')
+  })
+
   it('reports no changes on a no-op edit', async () => {
     const { files, forgejo } = fakeRepo()
     const c = ctx(forgejo)
