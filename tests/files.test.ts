@@ -188,7 +188,8 @@ describe('write', () => {
 })
 
 describe('edit (anchor lines + anchor content)', () => {
-  const decode = (f: Record<string, Uint8Array>) => new TextDecoder().decode(f['a.txt'])
+  const decode = (f: Record<string, Uint8Array>) =>
+    new TextDecoder('utf-8', { ignoreBOM: true }).decode(f['a.txt'])
 
   it('replaces the lines strictly between the two anchors', async () => {
     const files = { 'a.txt': enc('1\n2\n3\n4') }
@@ -240,6 +241,24 @@ describe('edit (anchor lines + anchor content)', () => {
     const files = { 'a.txt': enc('alpha\nbeta\ngamma\n') }
     await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': 'alpha', 'end-anchor': 'gamma', content: 'BETA' })
     expect(decode(files)).toBe('alpha\nBETA\ngamma\n')
+  })
+
+  it('preserves CRLF line endings across an edit', async () => {
+    const files = { 'a.txt': enc('alpha\r\nbeta\r\ngamma\r\n') }
+    await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': 'alpha', 'end-anchor': 'gamma', content: 'BETA' })
+    expect(decode(files)).toBe('alpha\r\nBETA\r\ngamma\r\n')
+  })
+
+  it('preserves a UTF-8 BOM across an edit', async () => {
+    const files = { 'a.txt': enc('\uFEFFalpha\nbeta\ngamma\n') }
+    await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': 'alpha', 'end-anchor': 'gamma', content: 'BETA' })
+    expect(decode(files)).toBe('\uFEFFalpha\nBETA\ngamma\n')
+  })
+
+  it('preserves CRLF + BOM together', async () => {
+    const files = { 'a.txt': enc('\uFEFFalpha\r\nbeta\r\ngamma\r\n') }
+    await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': 'alpha', 'end-anchor': 'gamma', content: 'BETA' })
+    expect(decode(files)).toBe('\uFEFFalpha\r\nBETA\r\ngamma\r\n')
   })
 
   it('rejects an out-of-range start anchor', async () => {

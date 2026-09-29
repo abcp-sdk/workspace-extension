@@ -73,7 +73,7 @@ export async function readFile(
     )
   }
   const lines = splitLines(
-    new TextDecoder('utf-8', { fatal: false }).decode(res.content),
+    new TextDecoder('utf-8', { fatal: false, ignoreBOM: true }).decode(res.content),
   )
   const total = res.totalLines > 0 ? res.totalLines : lines.length
   const winStart = res.startLine
@@ -144,7 +144,7 @@ export async function writeFile(
 
   // Read back (authoritative bytes) and render the whole file with line numbers.
   const read = await ctx.client.fileRead({ path })
-  const file = toFileLines(new TextDecoder('utf-8').decode(read.content))
+  const file = toFileLines(new TextDecoder('utf-8', { ignoreBOM: true }).decode(read.content))
   const numbered = numberLines(file.lines, 1)
   // Byte-only guard (never a line cap for write).
   const capped = capLines(numbered, Number.MAX_SAFE_INTEGER, MAX_RESULT_BYTES)
@@ -212,7 +212,7 @@ export async function editFile(
   }
 
   const read = await ctx.client.fileRead({ path })
-  const current = new TextDecoder('utf-8', { fatal: false }).decode(read.content)
+  const current = new TextDecoder('utf-8', { fatal: false, ignoreBOM: true }).decode(read.content)
   const file = toFileLines(current)
   const total = file.lines.length
   const inserted = content === '' ? [] : toFileLines(content).lines
@@ -241,7 +241,7 @@ export async function editFile(
 
   const next = applyEdit(file.lines, resolved.target, inserted)
 
-  const out = joinFileLines({ lines: next, trailingNewline: file.trailingNewline })
+  const out = joinFileLines({ ...file, lines: next })
   if (out === current) {
     return { content: tr(locale, 'editNoChanges', { path }) }
   }

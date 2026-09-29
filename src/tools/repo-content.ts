@@ -271,8 +271,11 @@ export async function repoEdit(
     }
   }
 
-  const got = await ctx.forgejo.getContents(r.org, r.repo, path, r.ref, ctx.locale)
-  if (got.kind !== 'file') throw new TypedToolError('not_found', tr(ctx.locale, 'forgejoNotFound', { msg: path }))
+  // Read via the BYTE path (ReadRaw): `getContents` returns a protobuf `string`
+  // whose decoder STRIPS a leading BOM, so a BOM file would lose its marker on
+  // write. `getFileText` keeps the BOM (and the sha) intact.
+  const got = await ctx.forgejo.getFileText(r.org, r.repo, path, r.ref, ctx.locale)
+  if (got === null) throw new TypedToolError('not_found', tr(ctx.locale, 'forgejoNotFound', { msg: path }))
 
   const file = toFileLines(got.text)
   const total = file.lines.length
@@ -302,7 +305,7 @@ export async function repoEdit(
 
   const next = applyEdit(file.lines, resolved.target, inserted)
 
-  const out = joinFileLines({ lines: next, trailingNewline: file.trailingNewline })
+  const out = joinFileLines({ ...file, lines: next })
   if (out === got.text) {
     return { content: tr(ctx.locale, 'repoNoChanges', { path, org: r.org, repo: r.repo, ref: r.ref || 'HEAD' }) }
   }

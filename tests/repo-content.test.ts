@@ -13,6 +13,10 @@ import {
  * In-memory repo backing a real gateway-backed Forgejo client. The file map is
  * `path -> { text, sha }`; sha is bumped per mutation so the read-before-edit
  * freshness check works.
+ *
+ * `contents` models the REAL gateway: its `text` is a protobuf `string`, whose
+ * decoder STRIPS a leading BOM. `readRaw` carries `bytes`, so the BOM survives.
+ * A BOM round-trip test therefore only passes when the edit reads via `readRaw`.
  */
 function fakeRepo() {
   const files = new Map<string, { text: string; sha: string }>()
@@ -26,14 +30,20 @@ function fakeRepo() {
           if (prop === 'contents') {
             const f = files.get(req['path'] as string)
             if (f === undefined) throw { code: 'not_found', message: 'not found' }
-            return { isDir: false, text: f.text, sha: f.sha, size: BigInt(f.text.length) }
+            const text = f.text.charCodeAt(0) === 0xfeff ? f.text.slice(1) : f.text
+            return { isDir: false, text, sha: f.sha, size: BigInt(f.text.length) }
+          }
+          if (prop === 'readRaw') {
+            const f = files.get(req['path'] as string)
+            if (f === undefined) throw { code: 'not_found', message: 'not found' }
+            return { data: new TextEncoder().encode(f.text), sha: f.sha, mime: 'text/plain', isText: true }
           }
           if (prop === 'commitFiles' || prop === 'applyFiles') {
             for (const f of (req['files'] as Array<Record<string, unknown>>) ?? []) {
               const p = f['path'] as string
               if (f['operation'] === 'delete') { files.delete(p); continue }
               const bytes = f['contentBytes'] as Uint8Array | undefined
-              const text = bytes !== undefined && bytes.length > 0 ? new TextDecoder().decode(bytes) : (f['content'] as string) ?? ''
+              const text = bytes !== undefined && bytes.length > 0 ? new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes) : (f['content'] as string) ?? ''
               files.set(p, { text, sha: sha() })
             }
             return { sha: sha() }
@@ -113,6 +123,22 @@ describe('repo anchor-line edit', () => {
     files.set('a.txt', { text: '1\n2\n', sha: 's1' })
     const r = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': '1', 'end-anchor': '', content: '2' })
     expect(String(r.content)).toContain('No changes')
+  })
+
+  it('preserves CRLF line endings across an edit', async () => {
+    const { files, forgejo } = fakeRepo()
+    const c = ctx(forgejo)
+    files.set('a.txt', { text: '1\r\n2\r\n3\r\n', sha: 'base' })
+    await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': '1', 'end-anchor': '3', content: 'X' })
+    expect(files.get('a.txt')!.text).toBe('1\r\nX\r\n3\r\n')
+  })
+
+  it('preserves a UTF-8 BOM across an edit', async () => {
+    const { files, forgejo } = fakeRepo()
+    const c = ctx(forgejo)
+    files.set('a.txt', { text: '\uFEFF1\n2\n3\n', sha: 'base' })
+    await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': '1', 'end-anchor': '3', content: 'X' })
+    expect(files.get('a.txt')!.text).toBe('\uFEFF1\nX\n3\n')
   })
 })
 

@@ -31,34 +31,57 @@ export function looksTextual(data: Uint8Array): boolean {
   }
 }
 
-/** Split content into lines, tolerating \r\n and a trailing newline. */
+/** Split content into lines, tolerating \r\n, a leading BOM and a trailing newline. */
 export function splitLines(text: string): string[] {
-  const normalized = text.replace(/\r\n/g, '\n')
-  const lines = normalized.split('\n')
+  const normalized = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+  const lines = normalized.replace(/\r\n/g, '\n').split('\n')
   // A single trailing newline yields a final "" element; drop only that one.
   if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
   return lines
 }
 
 /**
- * A file's lines plus whether it ended with a newline. The line array uses the
- * SAME model as `read`/`splitLines` (no phantom trailing empty line), so line
- * numbers and counts agree across tools. `joinText` re-adds the final newline.
+ * A file's lines plus the byte details needed to write it back byte-faithfully.
+ * The line array uses the SAME model as `read`/`splitLines` (no phantom trailing
+ * empty line), so line numbers and counts agree across tools. `joinFileLines`
+ * restores the original line terminator, final newline and UTF-8 BOM.
  */
 export interface FileLines {
   lines: string[]
   trailingNewline: boolean
+  /** Original line terminator (`\n`, or `\r\n`); restored on write. */
+  eol: '\n' | '\r\n'
+  /** True when the file began with a UTF-8 BOM; restored on write. */
+  bom: boolean
+}
+
+/** Detect the dominant line terminator (`\r\n` when any CRLF is present). */
+function detectEol(text: string): '\n' | '\r\n' {
+  return text.includes('\r\n') ? '\r\n' : '\n'
+}
+
+/** Strip a leading UTF-8 BOM (U+FEFF); report whether one was present. */
+function stripBom(text: string): { text: string; bom: boolean } {
+  return text.charCodeAt(0) === 0xfeff
+    ? { text: text.slice(1), bom: true }
+    : { text, bom: false }
 }
 
 export function toFileLines(text: string): FileLines {
-  const normalized = text.replace(/\r\n/g, '\n')
+  const { text: body, bom } = stripBom(text)
+  const eol = detectEol(body)
+  const normalized = body.replace(/\r\n/g, '\n')
   const trailingNewline = normalized.endsWith('\n')
-  return { lines: splitLines(normalized), trailingNewline }
+  return { lines: splitLines(normalized), trailingNewline, eol, bom }
 }
 
 export function joinFileLines(file: FileLines): string {
-  if (file.lines.length === 0) return ''
-  return file.lines.join('\n') + (file.trailingNewline ? '\n' : '')
+  const body =
+    file.lines.length === 0
+      ? ''
+      : file.lines.join('\n') + (file.trailingNewline ? '\n' : '')
+  const withEol = file.eol === '\r\n' ? body.replace(/\n/g, '\r\n') : body
+  return file.bom ? '\uFEFF' + withEol : withEol
 }
 
 /**

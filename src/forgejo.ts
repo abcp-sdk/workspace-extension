@@ -228,6 +228,27 @@ export class Forgejo {
     }
   }
 
+  /**
+   * Read one file's UTF-8 TEXT + blob sha, BOM-preserving. `getContents`
+   * returns a protobuf `string`, whose decoder STRIPS a leading BOM; `readRaw`
+   * carries `bytes`, so the BOM survives. The sha comes from `getContents`
+   * (ReadRaw omits it). Returns null when the path is absent / not a plain
+   * file. Use this for any read-modify-write so a BOM round-trips unchanged
+   * (CRLF is preserved by the caller's line model).
+   */
+  async getFileText(
+    org: string,
+    repo: string,
+    path: string,
+    ref: string,
+    locale = 'en',
+  ): Promise<{ text: string; sha: string } | null> {
+    const meta = await this.getContents(org, repo, path, ref, locale)
+    if (meta.kind !== 'file') return null
+    const bytes = await this.getRaw(org, repo, path, ref, locale)
+    return { text: new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes), sha: meta.sha }
+  }
+
   async putFile(
     org: string,
     repo: string,
