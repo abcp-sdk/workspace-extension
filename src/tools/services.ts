@@ -11,6 +11,44 @@ export interface ServiceCtx {
   locale: string
 }
 
+/**
+ * The pod-diagnostic fields every service view carries (proto ServiceInfo
+ * pod_phase/restarts/message). A service whose pod failed to start has no
+ * logs, so these are the only explanation; surface them everywhere.
+ */
+interface PodDiag {
+  pod_phase: string
+  restarts: number
+  message: string
+}
+
+/** Extract the diagnostic fields from a proto ServiceInfo (defaults empty). */
+function podDiag(s: {
+  podPhase?: string
+  restarts?: number
+  message?: string
+}): PodDiag {
+  return {
+    pod_phase: s.podPhase ?? '',
+    restarts: s.restarts ?? 0,
+    message: s.message ?? '',
+  }
+}
+
+/**
+ * One line describing a pod's diagnostics, for the tool `content` (empty when
+ * the pod is healthy and produced no message). `sep` joins the fields.
+ */
+function podDiagLine(locale: string, d: PodDiag): string {
+  const parts: string[] = []
+  if (d.pod_phase !== '') parts.push(`pod=${d.pod_phase}`)
+  if (d.restarts > 0) parts.push(`restarts=${d.restarts}`)
+  const base = parts.join(' ')
+  if (d.message === '') return base
+  const msg = tr(locale, 'servicePodMessage', { message: d.message })
+  return base === '' ? msg : `${base} ${msg}`
+}
+
 /** `service-deploy`: run an image as a long-lived Deployment + Service. */
 export async function serviceDeploy(
   ctx: ServiceCtx,
@@ -73,8 +111,11 @@ export async function serviceDeploy(
           slot: sl.slot, url: sl.publicUrl || sl.url, active: sl.slot === s.activeSlot ? ' *' : '',
         })).join('\n')
       : ''
+    const diag = podDiag(s)
+    const diagLine = podDiagLine(ctx.locale, diag)
+    const diagNote = diagLine === '' ? '' : '\n' + diagLine
     return {
-      content: tr(ctx.locale, 'serviceDeployed', { name: s.name, image: s.image, url: s.url }) + note + slotNote,
+      content: tr(ctx.locale, 'serviceDeployed', { name: s.name, image: s.image, url: s.url }) + note + slotNote + diagNote,
       data: {
         name: s.name, image: s.image, url: s.url,
         public_url: publics[0] ?? '', public_urls: publics,
@@ -82,6 +123,7 @@ export async function serviceDeploy(
         phase: s.phase, ready: s.ready, replicas: s.replicas,
         active_slot: s.activeSlot,
         slots: (s.slots ?? []).map(sl => ({ slot: sl.slot, image: sl.image, ready: sl.ready, replicas: sl.replicas, ready_replicas: sl.readyReplicas, url: sl.url, public_url: sl.publicUrl })),
+        ...diag,
       },
     }
   } catch (e) {
@@ -351,11 +393,13 @@ export async function serviceList(
     const slots = (s.slots ?? []).length
       ? `  slots=${(s.slots ?? []).map(sl => `${sl.slot}${sl.slot === s.activeSlot ? '*' : ''}(${sl.ready ? 'ready' : 'not-ready'})`).join(',')}`
       : ''
+    const diagLine = podDiagLine(ctx.locale, podDiag(s))
     return (
       `${s.name}  [${s.phase}${s.ready ? ', ready' : ''}]  ${s.image}  ${s.url}  x${s.replicas}` +
       (ports ? `  ports=${ports}` : '') +
       (publics.length ? `  public=${publics.join(',')}` : '') +
       slots +
+      (diagLine ? `  ${diagLine}` : '') +
       `  session=${s.session || '-'}`
     )
   })
@@ -376,6 +420,7 @@ export async function serviceList(
         publicUrl: (s.ports ?? []).filter(p => p.publicUrl).map(p => p.publicUrl)[0] ?? '',
         active_slot: s.activeSlot,
         slots: (s.slots ?? []).map(sl => ({ slot: sl.slot, image: sl.image, ready: sl.ready, replicas: sl.replicas, ready_replicas: sl.readyReplicas, url: sl.url, public_url: sl.publicUrl })),
+        ...podDiag(s),
       })),
     },
   }
@@ -425,12 +470,16 @@ export async function servicePreview(
     if (s === undefined) {
       throw new TypedToolError('internal', tr(ctx.locale, 'serviceDeployFailed', { err: 'no service in response' }))
     }
+    const diag = podDiag(s)
+    const diagLine = podDiagLine(ctx.locale, diag)
     return {
-      content: tr(ctx.locale, 'servicePreviewed', { name: s.name, image: s.image, url: s.url }),
+      content: tr(ctx.locale, 'servicePreviewed', { name: s.name, image: s.image, url: s.url }) +
+        (diagLine === '' ? '' : '\n' + diagLine),
       data: {
         name: s.name, image: s.image, url: s.url, stage: s.stage,
         phase: s.phase, ready: s.ready, expires_at: Number(s.expiresAt),
         ports: (s.ports ?? []).map(p => ({ name: p.name, preset: p.preset, port: p.port, protocol: p.protocol, target_port: p.targetPort })),
+        ...diag,
       },
     }
   } catch (e) {
@@ -450,10 +499,21 @@ export async function serviceLogs(
   try {
     const res = await ctx.workspace.serviceLogs({ name, tailLines: BigInt(tail), previous })
     const lines = res.lines
-    if (lines.length === 0) return { content: tr(ctx.locale, 'serviceLogsEmpty', { name }), data: { name, lines: 0 } }
+    const diag = podDiag(res)
+    const diagLine = podDiagLine(ctx.locale, diag)
+    if (lines.length === 0) {
+      // The container produced no logs: usually it never started (runc create
+      // failure, image pull error, crash loop). Explain WHY instead of a bare
+      // "no output", so the caller is not left guessing.
+      const head = tr(ctx.locale, 'serviceLogsEmpty', { name })
+      return {
+        content: diagLine === '' ? head : `${head}\n${diagLine}`,
+        data: { name, lines: 0, available: false, ...diag },
+      }
+    }
     return {
       content: tr(ctx.locale, 'serviceLogsHeader', { name, count: lines.length }) + '\n' + lines.join('\n'),
-      data: { name, lines: lines.length },
+      data: { name, lines: lines.length, available: true, ...diag },
     }
   } catch (e) {
     throw new TypedToolError('internal', tr(ctx.locale, 'serviceLogsFailed', { name, err: String(e) }))

@@ -289,6 +289,10 @@ export const CATALOG = {
     en: "No log output for '{name}'.",
     zh: "'{name}' 暂无日志输出。",
   },
+  servicePodMessage: {
+    en: 'reason: {message}',
+    zh: '原因：{message}',
+  },
   pvcCreated: {
     en: "Created PVC '{name}' ({size}, class {class}).",
     zh: "已创建 PVC '{name}'（{size}，存储类 {class}）。",

@@ -1346,7 +1346,7 @@ const TOOL_META: Record<string, ToolMeta> = {
         replicas: int('Replicas (default 1).', '副本数（默认 1）。'),
         cpu: str('CPU request/limit (e.g. 250m).', 'CPU 请求/上限（如 250m）。'),
         memory: str('Memory request/limit (e.g. 256Mi).', '内存请求/上限（如 256Mi）。'),
-        command: { type: 'array', items: { type: 'string' }, description: 'Command override (argv).', descriptions: { zh: '命令覆盖（argv）。' } },
+        command: { type: 'array', items: { type: 'string' }, description: 'Container ENTRYPOINT override (argv, executed directly with NO shell). Include the executable: ["/app/server","--listen=:8080"]. A bare flag like ["--listen=:8080"] is treated as the executable NAME and fails with RunContainerError. Omit to use the image ENTRYPOINT.', descriptions: { zh: '容器 ENTRYPOINT 覆盖（argv，直接执行，不经 shell）。需包含可执行文件本身：["/app/server","--listen=:8080"]。若只写 ["--listen=:8080"]，该字符串会被当作可执行文件名而报 RunContainerError。省略则用镜像自带的 ENTRYPOINT。' } },
         env: { type: 'object', additionalProperties: { type: 'string' }, description: 'Environment variables.', descriptions: { zh: '环境变量。' } },
         services: {
           type: 'array',
@@ -1411,7 +1411,7 @@ const TOOL_META: Record<string, ToolMeta> = {
         'container-port': int('Default target port for entries without one (default 8080).', '未指定 target-port 的条目所用的默认容器端口（默认 8080）。'),
         cpu: str('CPU request/limit (e.g. 250m).', 'CPU 请求/上限（如 250m）。'),
         memory: str('Memory request/limit (e.g. 256Mi).', '内存请求/上限（如 256Mi）。'),
-        command: { type: 'array', items: { type: 'string' }, description: 'Command override (argv).', descriptions: { zh: '命令覆盖（argv）。' } },
+        command: { type: 'array', items: { type: 'string' }, description: 'Container ENTRYPOINT override (argv, executed directly with NO shell). Include the executable: ["/app/server","--listen=:8080"]. A bare flag like ["--listen=:8080"] is treated as the executable NAME and fails with RunContainerError. Omit to use the image ENTRYPOINT.', descriptions: { zh: '容器 ENTRYPOINT 覆盖（argv，直接执行，不经 shell）。需包含可执行文件本身：["/app/server","--listen=:8080"]。若只写 ["--listen=:8080"]，该字符串会被当作可执行文件名而报 RunContainerError。省略则用镜像自带的 ENTRYPOINT。' } },
         env: { type: 'object', additionalProperties: { type: 'string' }, description: 'Environment variables.', descriptions: { zh: '环境变量。' } },
         services: {
           type: 'array',
