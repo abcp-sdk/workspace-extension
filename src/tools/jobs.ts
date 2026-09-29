@@ -178,7 +178,7 @@ export async function jobWait(
   args: Record<string, unknown>,
 ): Promise<ToolResultData> {
   const jobId = requireArg(args, 'job-id', ctx.locale)
-  const timeoutS = secondsArg(args, 60, 600)
+  const timeoutS = secondsArg(args, 60, 300)
   const done = await waitForJob(ctx.client, jobId, timeoutS * 1000, ctx.signal)
   const { text } = await renderOutput(ctx.client, jobId, -200, 0, 'all', ctx.locale)
   if (done.state === RUNNING) {

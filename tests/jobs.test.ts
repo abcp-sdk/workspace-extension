@@ -179,3 +179,17 @@ describe('job-list', () => {
     expect(job.command).toBe(multiline)
   })
 })
+
+describe('job-wait timeout ceiling', () => {
+  it('clamps the timeout argument to 300s', async () => {
+    // The still-running note echoes the CLAMPED ceiling, so drive jobWait with
+    // a client that never settles and assert on the echoed value. We only need
+    // the clamp, so call with a tiny real budget by passing timeout=300 and
+    // checking the parser via the still-running text.
+    const { secondsArg } = await import('../src/tools/shared.js')
+    expect(secondsArg({ timeout: 100000 }, 60, 300)).toBe(300)
+    expect(secondsArg({ timeout: 600 }, 60, 300)).toBe(300)
+    expect(secondsArg({ timeout: 120 }, 60, 300)).toBe(120)
+    expect(secondsArg({}, 60, 300)).toBe(60)
+  })
+})

@@ -1028,7 +1028,7 @@ const TOOL_META: Record<string, ToolMeta> = {
     inputSchema: obj(
       {
         'job-id': JOB_ID,
-        timeout: int('Wait ceiling in seconds (default 60, max 600).', '等待上限（秒，默认 60，最大 600）。'),
+        timeout: int('Wait ceiling in seconds (default 60, max 300).', '等待上限（秒，默认 60，最大 300）。'),
       },
       ['job-id'],
     ),
