@@ -8,13 +8,14 @@ import { capLines, humanSize, MAX_RESULT_LINES, truncationNote } from './output.
 import { unifiedDiff } from './diff.js'
 import {
   applyEdit,
+  checkAnchor,
   joinFileLines,
   numberLines,
   resolveEditTarget,
   toFileLines,
   windowLines,
 } from './text.js'
-import { anchorArg, numArg, rangeError, requireArg, strArg } from './shared.js'
+import { anchorArg, anchorError, hasArg, numArg, rangeError, requireArg, strArg } from './shared.js'
 
 /** Everything a repo-* tool handler needs at call time. */
 export interface RepoCtx {
@@ -254,6 +255,21 @@ export async function repoEdit(
   const path = requireArg(args, 'path', ctx.locale)
   const content = strArg(args, 'content')
   const message = strArg(args, 'message') || `edit ${path}`
+  const startAnchorText = strArg(args, 'start-anchor')
+  const endAnchorText = strArg(args, 'end-anchor')
+
+  // All four anchor arguments are REQUIRED (present, though the content may be
+  // "" at the head/tail).
+  for (const key of [
+    'start-anchor-line',
+    'end-anchor-line',
+    'start-anchor',
+    'end-anchor',
+  ]) {
+    if (!hasArg(args, key)) {
+      throw new TypedToolError('invalid_argument', tr(ctx.locale, 'editAnchorRequired', { key }))
+    }
+  }
 
   const got = await ctx.forgejo.getContents(r.org, r.repo, path, r.ref, ctx.locale)
   if (got.kind !== 'file') throw new TypedToolError('not_found', tr(ctx.locale, 'forgejoNotFound', { msg: path }))
@@ -271,6 +287,17 @@ export async function repoEdit(
   const resolved = resolveEditTarget(startAnchor, endAnchor, total)
   if (!resolved.ok) {
     throw rangeError(ctx.locale, path, total, resolved.reason, startAnchor, endAnchor)
+  }
+
+  // Anchor-content validation: the UNCHANGED line above (start-anchor-line) and
+  // below (end-anchor-line) the region must match the caller's copy.
+  const startCheck = checkAnchor(file.lines, startAnchor, startAnchorText, total)
+  if (!startCheck.ok) {
+    throw anchorError(ctx.locale, path, 'start', startAnchor, total, startCheck)
+  }
+  const endCheck = checkAnchor(file.lines, endAnchor, endAnchorText, total)
+  if (!endCheck.ok) {
+    throw anchorError(ctx.locale, path, 'end', endAnchor, total, endCheck)
   }
 
   const next = applyEdit(file.lines, resolved.target, inserted)

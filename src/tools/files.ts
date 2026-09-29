@@ -10,7 +10,9 @@ import {
 } from './output.js'
 import {
   anchorArg,
+  anchorError,
   baseName,
+  hasArg,
   numArg,
   rangeError,
   requireArg,
@@ -18,6 +20,7 @@ import {
 } from './shared.js'
 import {
   applyEdit,
+  checkAnchor,
   joinFileLines,
   looksTextual,
   normalizeRel,
@@ -192,6 +195,21 @@ export async function editFile(
   const path = requireArg(args, 'path', ctx.locale)
   const locale = ctx.locale ?? 'en'
   const content = strArg(args, 'content')
+  const startAnchorText = strArg(args, 'start-anchor')
+  const endAnchorText = strArg(args, 'end-anchor')
+
+  // All four anchor arguments are REQUIRED (present, though the content may be
+  // "" at the head/tail). A missing key is a caller error.
+  for (const key of [
+    'start-anchor-line',
+    'end-anchor-line',
+    'start-anchor',
+    'end-anchor',
+  ]) {
+    if (!hasArg(args, key)) {
+      throw new TypedToolError('invalid_argument', tr(locale, 'editAnchorRequired', { key }))
+    }
+  }
 
   const read = await ctx.client.fileRead({ path })
   const current = new TextDecoder('utf-8', { fatal: false }).decode(read.content)
@@ -208,6 +226,17 @@ export async function editFile(
   const resolved = resolveEditTarget(startAnchor, endAnchor, total)
   if (!resolved.ok) {
     throw rangeError(locale, path, total, resolved.reason, startAnchor, endAnchor)
+  }
+
+  // Anchor-content validation: the UNCHANGED line above (start-anchor-line) and
+  // below (end-anchor-line) the region must match the caller's copy.
+  const startCheck = checkAnchor(file.lines, startAnchor, startAnchorText, total)
+  if (!startCheck.ok) {
+    throw anchorError(locale, path, 'start', startAnchor, total, startCheck)
+  }
+  const endCheck = checkAnchor(file.lines, endAnchor, endAnchorText, total)
+  if (!endCheck.ok) {
+    throw anchorError(locale, path, 'end', endAnchor, total, endCheck)
   }
 
   const next = applyEdit(file.lines, resolved.target, inserted)

@@ -726,9 +726,10 @@ const EXEC_WARNING_ZH =
  * that are the UNCHANGED lines just outside it.
  */
 const EDIT_DESC_EN =
-  'Edit a file by ANCHOR LINE NUMBERS (1-based). The edit region is the lines STRICTLY BETWEEN two anchors that are the UNCHANGED lines just OUTSIDE it: start-anchor-line is the line ABOVE the region (0 = the head of the file) and end-anchor-line is the line BELOW it (total + 1 = the tail of the file). `content` REPLACES the lines between the anchors; an empty region inserts, and empty `content` deletes. So: insert between lines 27 and 28 -> start-anchor-line 27, end-anchor-line 28; replace lines 28..29 -> start-anchor-line 27, end-anchor-line 30; prepend at the head -> start-anchor-line 0, end-anchor-line 1; append at the tail -> start-anchor-line total, end-anchor-line total + 1. Anchors are NEVER silently clamped: start-anchor-line must be in [0, total], end-anchor-line in [1, total + 1], and end-anchor-line >= start-anchor-line + 1. Read the file first to know the exact line numbers. Returns a one-line summary followed by a unified diff.'
+  'Edit a file by ANCHOR LINE NUMBERS (1-based). The edit region is the lines STRICTLY BETWEEN two anchors that are the UNCHANGED lines just OUTSIDE it: start-anchor-line is the line ABOVE the region (0 = the head of the file) and end-anchor-line is the line BELOW it (total + 1 = the tail of the file). `content` REPLACES the lines between the anchors; an empty region inserts, and empty `content` deletes. So: insert between lines 27 and 28 -> start-anchor-line 27, end-anchor-line 28; replace lines 28..29 -> start-anchor-line 27, end-anchor-line 30; prepend at the head -> start-anchor-line 0, end-anchor-line 1; append at the tail -> start-anchor-line total, end-anchor-line total + 1. FOUR ARGUMENTS ARE REQUIRED: start-anchor-line, end-anchor-line, start-anchor, end-anchor. start-anchor / end-anchor are your own copy of the CURRENT text of those two unchanged anchor lines (from read output, line-number prefix removed); the tool compares with trim() and REFUSES the edit (retryable, without writing) on a mismatch — this catches any line shift before writing. When a boundary does not exist (start-anchor-line 0 = head, end-anchor-line total + 1 = tail) you MUST pass an empty string for that anchor. Line numbers are NEVER silently clamped: start-anchor-line must be in [0, total], end-anchor-line in [1, total + 1], and end-anchor-line >= start-anchor-line + 1. Read the file first to know the exact line numbers AND the anchor text. Returns a one-line summary followed by a unified diff.'
 const EDIT_DESC_ZH =
-  '按【锚行号】（从 1 开始）编辑文件。编辑区是两条锚行【之间】的行；锚行是编辑区两侧的【不变】行：start-anchor-line 是编辑区上方那行（0 = 文件头），end-anchor-line 是下方那行（总行数 + 1 = 文件尾）。`content` 替换两条锚行之间的行；区间为空即插入，`content` 为空即删除。因此：在第 27、28 行之间插入 → start-anchor-line 27、end-anchor-line 28；替换第 28..29 行 → start-anchor-line 27、end-anchor-line 30；文件头插入 → start-anchor-line 0、end-anchor-line 1；文件尾追加 → start-anchor-line 总行数、end-anchor-line 总行数 + 1。锚行号绝不静默夹取：start-anchor-line 必须在 [0, 总行数]，end-anchor-line 必须在 [1, 总行数 + 1]，且 end-anchor-line >= start-anchor-line + 1。请先 read 文件以获知确切行号。返回一行摘要及本次改动的 unified diff。'
+  '按【锚行号】（从 1 开始）编辑文件。编辑区是两条锚行【之间】的行；锚行是编辑区两侧的【不变】行：start-anchor-line 是编辑区上方那行（0 = 文件头），end-anchor-line 是下方那行（总行数 + 1 = 文件尾）。`content` 替换两条锚行之间的行；区间为空即插入，`content` 为空即删除。因此：在第 27、28 行之间插入 → start-anchor-line 27、end-anchor-line 28；替换第 28..29 行 → start-anchor-line 27、end-anchor-line 30；文件头插入 → start-anchor-line 0、end-anchor-line 1；文件尾追加 → start-anchor-line 总行数、end-anchor-line 总行数 + 1。四个参数【必填】：start-anchor-line、end-anchor-line、start-anchor、end-anchor。start-anchor / end-anchor 是这两条不变锚行【当前原文】的抄写（来自 read 输出、去掉行号前缀）；工具用 trim() 比对，不匹配则拒绝编辑（retryable，不写盘）——这能在写盘前发现任何行位移。某一侧不存在时（start-anchor-line 为 0 = 文件头、end-anchor-line 为 总行数 + 1 = 文件尾），该 anchor 必须传空字符串。锚行号绝不静默夹取：start-anchor-line 必须在 [0, 总行数]，end-anchor-line 必须在 [1, 总行数 + 1]，且 end-anchor-line >= start-anchor-line + 1。请先 read 文件以获知确切行号与锚行原文。返回一行摘要及本次改动的 unified diff。'
+
 
 /** The `probe` object shared by readiness/liveness/startup probes. */
 const probeSchema = (): Record<string, unknown> => ({
@@ -1091,9 +1092,11 @@ const TOOL_META: Record<string, ToolMeta> = {
         path: str('File path: relative to the workspace root, absolute, or starting with `~` (the worker home).'+TILDE_EN, '文件路径：相对工作区根、绝对路径，或以 `~`（worker 主目录）开头。'+TILDE_ZH),
         'start-anchor-line': int('1-based line number of the UNCHANGED line immediately ABOVE the edit region, in [0, total]; 0 (or "") = the head of the file.', '编辑区上方那条【不变】行的行号（从 1 开始），取值 [0, 总行数]；0（或空字符串）= 文件头。'),
         'end-anchor-line': int('1-based line number of the UNCHANGED line immediately BELOW the edit region, in [1, total + 1]; total + 1 (or "") = the tail of the file.', '编辑区下方那条【不变】行的行号（从 1 开始），取值 [1, 总行数 + 1]；总行数 + 1（或空字符串）= 文件尾。'),
+        'start-anchor': str('Your copy of the CURRENT text of the UNCHANGED line at start-anchor-line (from read output without the line-number prefix). Required; pass an empty string when start-anchor-line == 0. Compared with trim(); a mismatch refuses the edit.', '你对 start-anchor-line 那条【不变】行当前原文的抄写（来自 read 输出、去掉行号前缀）。必填；start-anchor-line == 0（文件头）时传空字符串。用 trim() 比对，不匹配则拒绝编辑。'),
+        'end-anchor': str('Your copy of the CURRENT text of the UNCHANGED line at end-anchor-line (from read output without the line-number prefix). Required; pass an empty string when end-anchor-line == total + 1. Compared with trim(); a mismatch refuses the edit.', '你对 end-anchor-line 那条【不变】行当前原文的抄写（来自 read 输出、去掉行号前缀）。必填；end-anchor-line == 总行数 + 1（文件尾）时传空字符串。用 trim() 比对，不匹配则拒绝编辑。'),
         content: str('Replacement text for the region strictly between the two anchors; an empty region inserts, empty content deletes.', '替换两条锚行之间区域的文本；区间为空即插入，空字符串即删除。'),
       },
-      ['path', 'start-anchor-line', 'end-anchor-line'],
+      ['path', 'start-anchor-line', 'end-anchor-line', 'start-anchor', 'end-anchor'],
     ),
     required: SANDBOX_REQUIRED,
   },
@@ -1581,10 +1584,12 @@ const TOOL_META: Record<string, ToolMeta> = {
         path: str('File path, relative to the repository root.', '文件路径，相对于仓库根目录。'),
         'start-anchor-line': int('1-based line number of the UNCHANGED line immediately ABOVE the edit region, in [0, total]; 0 (or "") = the head of the file.', '编辑区上方那条【不变】行的行号（从 1 开始），取值 [0, 总行数]；0（或空字符串）= 文件头。'),
         'end-anchor-line': int('1-based line number of the UNCHANGED line immediately BELOW the edit region, in [1, total + 1]; total + 1 (or "") = the tail of the file.', '编辑区下方那条【不变】行的行号（从 1 开始），取值 [1, 总行数 + 1]；总行数 + 1（或空字符串）= 文件尾。'),
+        'start-anchor': str('Your copy of the CURRENT text of the UNCHANGED line at start-anchor-line (from repo-file-read output without the line-number prefix). Required; pass an empty string when start-anchor-line == 0. Compared with trim(); a mismatch refuses the edit.', '你对 start-anchor-line 那条【不变】行当前原文的抄写（来自 repo-file-read 输出、去掉行号前缀）。必填；start-anchor-line == 0（文件头）时传空字符串。用 trim() 比对，不匹配则拒绝编辑。'),
+        'end-anchor': str('Your copy of the CURRENT text of the UNCHANGED line at end-anchor-line (from repo-file-read output without the line-number prefix). Required; pass an empty string when end-anchor-line == total + 1. Compared with trim(); a mismatch refuses the edit.', '你对 end-anchor-line 那条【不变】行当前原文的抄写（来自 repo-file-read 输出、去掉行号前缀）。必填；end-anchor-line == 总行数 + 1（文件尾）时传空字符串。用 trim() 比对，不匹配则拒绝编辑。'),
         content: str('Replacement text for the region strictly between the two anchors; an empty region inserts, empty content deletes.', '替换两条锚行之间区域的文本；区间为空即插入，空字符串即删除。'),
         message: str('Commit message (defaults to "edit <path>").', '提交信息（默认 "edit <path>"）。'),
       },
-      ['org', 'repo', 'path', 'start-anchor-line', 'end-anchor-line'],
+      ['org', 'repo', 'path', 'start-anchor-line', 'end-anchor-line', 'start-anchor', 'end-anchor'],
     ),
     required: REPO_REQUIRED,
   },

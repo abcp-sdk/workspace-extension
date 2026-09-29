@@ -96,7 +96,7 @@ maybe('live e2e: workspace repo-* tools against a real Forgejo', () => {
 
     const edited = await call('repo-file-edit', {
       org: E2E_ORG, repo: E2E_REPO, path: scratch,
-      'start-anchor-line': 1, 'end-anchor-line': 3, content: 'LINE2', message: 'e2e: edit scratch',
+      'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': 'line1', 'end-anchor': 'line3', content: 'LINE2', message: 'e2e: edit scratch',
     })
     expect(edited.content).toContain('@@')
     expect(edited.content).toContain('-line2')
@@ -106,7 +106,7 @@ maybe('live e2e: workspace repo-* tools against a real Forgejo', () => {
     const bad = await agent
       .callTool(tenant, session, 'workspace', 'repo-file-edit', `call-bad-${Date.now()}`, {
         org: E2E_ORG, repo: E2E_REPO, path: scratch,
-        'start-anchor-line': 99, 'end-anchor-line': 100, content: 'Z',
+        'start-anchor-line': 99, 'end-anchor-line': 100, 'start-anchor': '', 'end-anchor': '', content: 'Z',
       })
       .then(r => r.error)
     expect(bad?.code).toBe('invalid_argument')

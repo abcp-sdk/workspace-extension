@@ -93,7 +93,7 @@ takes a required **`worker-name`**.
 |---|---|
 | `sandbox-read` | text-only, `offset`/`limit` (default 200, max 1000), **line-numbered**, truncation marker; binary → error |
 | `sandbox-write` | overwrite with full content; rejected over 120 KiB; returns the numbered **whole** file |
-| `sandbox-edit` | anchor-line edit: `start-anchor-line`/`end-anchor-line` are the UNCHANGED lines just OUTSIDE the region (`0` = head, `total+1` = tail); the lines between them are replaced (empty region inserts, empty content deletes). Returns a summary + unified diff |
+| `sandbox-edit` | anchor-line edit: `start-anchor-line`/`end-anchor-line` are the UNCHANGED lines just OUTSIDE the region (`0` = head, `total+1` = tail) and `start-anchor`/`end-anchor` are their current text (verified); the lines between them are replaced (empty region inserts, empty content deletes) |
 | `sandbox-ls` | breadth-first tree levels 1..`depth` (default 3), `limit` default 200 / max 1000 |
 | `sandbox-download` | agent `file:<code>` → workspace path |
 | `sandbox-upload` | workspace path → agent `file:<code>` (agent derives the MIME) |
@@ -115,7 +115,7 @@ Every `repo-*` tool requires `forgejo-url`; auth is `forgejo-token` (PAT), or
 | `repo-create-repo` | create a repository under an org or user; optional `auto-init` + `default-branch` |
 | `repo-read` | line-numbered text window |
 | `repo-write` | create/overwrite one file (one commit), optimistic lock by blob sha |
-| `repo-edit` | anchor-line edit (one commit): `start-anchor-line`/`end-anchor-line` bracket the replaced region; unified diff |
+| `repo-edit` | anchor-line edit (one commit): `start-anchor-line`/`end-anchor-line` bracket the replaced region and `start-anchor`/`end-anchor` are their current text (verified); unified diff |
 | `repo-delete` | delete one file (one commit) |
 | `repo-list` | list a directory (or a file) at a ref |
 | `repo-commit` | commit several files **atomically** (create/update/delete), optional `new-branch` |
@@ -135,15 +135,21 @@ Every `repo-*` tool requires `forgejo-url`; auth is `forgejo-token` (PAT), or
 
 Both `sandbox-edit` and `repo-edit` edit by ANCHOR LINE NUMBERS. The edit region
 is the lines STRICTLY BETWEEN two anchors that are the UNCHANGED lines just
-outside it:
+outside it. FOUR arguments are required:
 
 - `start-anchor-line`: the unchanged line ABOVE the region (`0` = the head).
 - `end-anchor-line`: the unchanged line BELOW the region (`total + 1` = the tail).
+- `start-anchor` / `end-anchor`: your copy of the CURRENT text of those two
+  anchor lines (from read output, prefix removed). Verified with `trim()`; a
+  mismatch (or an empty value where the line exists) refuses the edit
+  (`retryable`, no write). At a boundary that does not exist (`0` / `total + 1`)
+  pass an empty string.
 
-So insert between lines 27 and 28 with `27`/`28`; replace lines 28..29 with
-`27`/`30`; prepend with `0`/`1`; append with `total`/`total + 1`. An empty
-region inserts; empty `content` deletes. Out-of-range anchors are rejected
-(never clamped). There is no read-before-edit requirement.
+So insert between lines 27 and 28 with `27`/`28` (plus the two anchor texts);
+replace lines 28..29 with `27`/`30`; prepend with `0`/`1`; append with
+`total`/`total + 1`. An empty region inserts; empty `content` deletes.
+Out-of-range anchors are rejected (never clamped). There is no read-before-edit
+requirement.
 
 ## Configuration
 

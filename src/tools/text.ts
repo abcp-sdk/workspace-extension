@@ -184,3 +184,35 @@ export function applyEdit(
 ): string[] {
   return [...lines.slice(0, target.s), ...inserted, ...lines.slice(target.e - 1)]
 }
+
+/** Why an anchor's content failed to validate. */
+export type AnchorError =
+  | { reason: 'missing'; actual: string }
+  | { reason: 'mismatch'; actual: string; expected: string }
+  | { reason: 'outOfRange' }
+
+/**
+ * Validate an `anchor` (the caller's copy of an anchor line's text) against
+ * line `line` (1-based) of `lines`. An EMPTY `anchor` means "this boundary does
+ * not exist": it is required when the line EXISTS and forbidden when it does
+ * not. Comparison is `trim()`-based, so indentation/whitespace transcription
+ * slips are tolerated while the actual content must still match.
+ */
+export function checkAnchor(
+  lines: readonly string[],
+  line: number,
+  anchor: string,
+  total: number,
+): { ok: true } | ({ ok: false } & AnchorError) {
+  const exists = line >= 1 && line <= total
+  if (!exists) {
+    return anchor.trim() === ''
+      ? { ok: true }
+      : { ok: false, reason: 'outOfRange' }
+  }
+  const actual = lines[line - 1] ?? ''
+  if (anchor.trim() === '') return { ok: false, reason: 'missing', actual }
+  return actual.trim() === anchor.trim()
+    ? { ok: true }
+    : { ok: false, reason: 'mismatch', actual, expected: anchor }
+}

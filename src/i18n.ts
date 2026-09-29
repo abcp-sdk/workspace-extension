@@ -399,6 +399,22 @@ export const CATALOG = {
     en: 'end-anchor-line ({end}) must be greater than start-anchor-line ({start}); the two anchor the unchanged lines just outside the edit region.',
     zh: 'end-anchor-line（{end}）必须大于 start-anchor-line（{start}）；两者锚定编辑区两侧的不变行。',
   },
+  editAnchorMissing: {
+    en: "the anchor line {kind} the edit region (line {line} of '{path}') exists but '{kind}-anchor' is empty; pass its current text. That line is: {actual}",
+    zh: "编辑区{kindSide}的锚行（'{path}' 第 {line} 行）存在，但 '{kind}-anchor' 为空；请传该行当前原文。该行内容：{actual}",
+  },
+  editAnchorMismatch: {
+    en: "'{kind}-anchor' (line {line} of '{path}', the unchanged line {kindSide} the edit region) does not match: expected {expected}, found {actual}. The file or line numbers changed; call read again.",
+    zh: "'{kind}-anchor'（'{path}' 第 {line} 行，即编辑区{kindSide}的不变行）不匹配：期望 {expected}，实际 {actual}。文件或行号已变化；请重新 read。",
+  },
+  editAnchorOutOfRange: {
+    en: "'{kind}-anchor' was given for line {line}, which does not exist in '{path}' ({total} lines); pass an empty string instead.",
+    zh: "'{path}'（{total} 行）中不存在第 {line} 行，'{kind}-anchor' 应传空字符串。",
+  },
+  editAnchorRequired: {
+    en: "'{key}' is a required argument; pass the current text of the line it anchors, or an empty string when that line does not exist.",
+    zh: "'{key}' 是必填参数；请传其锚定行的当前原文，该行不存在时传空字符串。",
+  },
   mailBranchMissing: {
     en: "branch '{branch}' does not exist in the repository (branch <-> session is 1:1)",
     zh: "仓库中不存在分支 '{branch}'（分支与会话一一对应）。",

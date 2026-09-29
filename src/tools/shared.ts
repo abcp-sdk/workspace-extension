@@ -1,6 +1,6 @@
 import { TypedToolError } from '@abc-protocol/sdk'
 import { tr } from '../i18n.js'
-import { expandTilde, type EditRangeError } from './text.js'
+import { expandTilde, type AnchorError, type EditRangeError } from './text.js'
 
 /**
  * Return `args` with a leading `~` expanded in the given string path keys
@@ -22,6 +22,49 @@ export function expandPathArgs(
     out[k] = e
   }
   return out ?? args
+}
+
+/** Clip long line text for an error message. */
+export function clip(s: string, n = 80): string {
+  return s.length > n ? `${s.slice(0, n)}…` : s
+}
+
+/** Build the typed error for a failed anchor-content check. */
+export function anchorError(
+  locale: string,
+  path: string,
+  kind: 'start' | 'end',
+  line: number,
+  total: number,
+  c: AnchorError,
+): TypedToolError {
+  const kindSide = anchorSide(locale, kind)
+  if (c.reason === 'missing') {
+    return new TypedToolError(
+      'retryable',
+      tr(locale, 'editAnchorMissing', { kind, kindSide, line, path, actual: clip(c.actual) }),
+    )
+  }
+  if (c.reason === 'mismatch') {
+    return new TypedToolError(
+      'retryable',
+      tr(locale, 'editAnchorMismatch', {
+        kind, kindSide, line, path,
+        expected: clip(c.expected), actual: clip(c.actual),
+      }),
+    )
+  }
+  return new TypedToolError(
+    'retryable',
+    tr(locale, 'editAnchorOutOfRange', { kind, kindSide, line, path, total }),
+  )
+}
+
+/** Localized word for which anchor boundary a check guards. */
+function anchorSide(locale: string, kind: 'start' | 'end'): string {
+  const zh = locale.toLowerCase().startsWith('zh')
+  if (kind === 'start') return zh ? '上方' : 'above'
+  return zh ? '下方' : 'below'
 }
 
 /** Map a resolved-anchor failure to its localized `invalid_argument` error. */
