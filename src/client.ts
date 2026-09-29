@@ -181,12 +181,21 @@ export class WorkerResolver {
       // The gateway hides another session's sandbox as NotFound; surface it as
       // a typed not_found so the tool layer does not report a bare `internal`.
       // Match structurally (numeric Code or the `[not_found]` prefix) because a
-      // duplicate @connectrpc/connect instance can defeat `instanceof`.
+      // duplicate @connectrpc/connect version can defeat `instanceof`.
       const code = (e as { code?: unknown }).code
       if (code === Code.NotFound || String(e).includes('[not_found]')) {
         throw new TypedToolError('not_found', `sandbox not found: ${name}`)
       }
       throw e
+    }
+    // A sandbox that exited (OOMKilled / crash, RestartPolicy Never) is `Failed`
+    // and cannot run anything: refuse here with the reason so every sandbox-*
+    // tool reports it instead of a raw connection error.
+    if (res.phase === 'Failed' || res.message !== '') {
+      throw new TypedToolError(
+        'business',
+        `sandbox '${name}' has exited (reason: ${res.message || 'unknown'})`,
+      )
     }
     const endpoint: WorkerEndpoint = { url: res.url, token: res.token }
     this.cache.set(name, { endpoint, at: Date.now() })

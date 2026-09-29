@@ -365,6 +365,22 @@ export const CATALOG = {
     en: "Deleted sandbox '{name}'.",
     zh: "已删除沙箱 '{name}'。",
   },
+  sandboxDiag: {
+    en: 'sandbox exited/failed: restarts={restarts}, reason: {message}',
+    zh: '沙箱已退出/失败：重启 {restarts} 次，原因：{message}',
+  },
+  sandboxLogsHeader: {
+    en: "Logs for sandbox '{name}' (last {count} lines):",
+    zh: "沙箱 '{name}' 的日志（最后 {count} 行）：",
+  },
+  sandboxLogsEmpty: {
+    en: "No log output for sandbox '{name}'.",
+    zh: "沙箱 '{name}' 暂无日志输出。",
+  },
+  sandboxLogsFailed: {
+    en: "sandbox-logs failed for '{name}': {err}",
+    zh: "读取沙箱 '{name}' 日志失败：{err}",
+  },
   workerNameRequired: {
     en: "worker-name is required (call sandbox-create or sandbox-list first)",
     zh: '缺少 worker-name（请先调用 sandbox-create 或 sandbox-list）。',

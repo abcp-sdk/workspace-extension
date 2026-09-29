@@ -11,6 +11,9 @@ await build({
   target: 'node26',
   outfile: 'dist/main.js',
   external: [],
+  // The manifest is imported as a raw string (`import manifestYaml from
+  // '../manifest.yaml'`); inline it exactly like the other extensions.
+  loader: { '.yaml': 'text' },
   banner: {
     js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);",
   },

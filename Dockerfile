@@ -19,6 +19,7 @@ RUN apk add --no-cache git \
 COPY package.json package-lock.json .npmrc tsconfig.json ./
 COPY scripts scripts
 COPY src src
+COPY manifest.yaml manifest.yaml
 RUN npm install --no-audit --strict-ssl=false && npm run build
 
 FROM ${REGISTRY}/root/alpine:3.24

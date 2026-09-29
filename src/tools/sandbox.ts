@@ -157,9 +157,14 @@ export async function sandboxList(
   const res = await ctx.workspace.listSandboxes({})
   const workers = res.sandboxes
   if (workers.length === 0) return { content: tr(ctx.locale, 'sandboxNone') }
-  const lines = workers.map(
-    w => `${w.name}  [${w.phase}${w.ready ? ', ready' : ''}]  ${w.image}  ${w.url}  ${short(w.createdAt)}  by ${w.creator || '-'}`,
-  )
+  const lines = workers.map(w => {
+    const diag = w.message
+      ? `  restarts=${w.restarts} reason: ${w.message}`
+      : w.restarts > 0
+        ? `  restarts=${w.restarts}`
+        : ''
+    return `${w.name}  [${w.phase}${w.ready ? ', ready' : ''}]  ${w.image}  ${w.url}  ${short(w.createdAt)}  by ${w.creator || '-'}${diag}`
+  })
   const capped = capLines(lines)
   let content = capped.kept.join('\n')
   if (capped.truncated) content += truncationNote(capped, capped.kept.length, lines.length, ctx.locale)
@@ -174,6 +179,8 @@ export async function sandboxList(
         url: w.url,
         creator: w.creator,
         session: w.session,
+        restarts: w.restarts,
+        message: w.message,
       })),
     },
   }
@@ -192,14 +199,51 @@ export async function sandboxStatus(
     if (w === undefined) {
       throw new TypedToolError('not_found', tr(ctx.locale, 'sandboxNotFound', { name, err: 'no sandbox in response' }))
     }
+    const diag = w.message ? `\n${tr(ctx.locale, 'sandboxDiag', { restarts: w.restarts, message: w.message })}` : ''
     return {
       content: tr(ctx.locale, 'sandboxStatus', {
         name: w.name, phase: w.phase, ready: w.ready ? ', ready' : '', image: w.image, url: w.url,
-      }),
-      data: { name: w.name, phase: w.phase, ready: w.ready, image: w.image, url: w.url, creator: w.creator, created_at: Number(w.createdAt) },
+      }) + diag,
+      data: {
+        name: w.name, phase: w.phase, ready: w.ready, image: w.image, url: w.url,
+        creator: w.creator, created_at: Number(w.createdAt),
+        restarts: w.restarts, message: w.message,
+      },
     }
   } catch (e) {
     throw new TypedToolError('not_found', tr(ctx.locale, 'sandboxNotFound', { name, err: String(e) }))
+  }
+}
+
+/** `sandbox-logs`: read a sandbox pod's container log (tail, optionally previous). */
+export async function sandboxLogs(
+  ctx: SandboxCtx,
+  args: Record<string, unknown>,
+): Promise<ToolResultData> {
+  const name = strArg(args, 'worker-name')
+  if (name === '') throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'worker-name' }))
+  const tail = Math.trunc(numArg(args, 'tail-lines') ?? 0)
+  const previous = args['previous'] === true
+  try {
+    const res = await ctx.workspace.sandboxLogs({ name, tailLines: BigInt(tail), previous })
+    const lines = res.lines
+    const diag = res.message
+      ? tr(ctx.locale, 'sandboxDiag', { restarts: res.restarts, message: res.message })
+      : ''
+    if (lines.length === 0) {
+      const head = tr(ctx.locale, 'sandboxLogsEmpty', { name })
+      return {
+        content: diag === '' ? head : `${head}\n${diag}`,
+        data: { name, lines: 0, available: false, phase: res.phase, restarts: res.restarts, message: res.message },
+      }
+    }
+    const header = tr(ctx.locale, 'sandboxLogsHeader', { name, count: lines.length })
+    return {
+      content: header + '\n' + lines.join('\n') + (diag === '' ? '' : `\n${diag}`),
+      data: { name, lines: lines.length, available: true, phase: res.phase, restarts: res.restarts, message: res.message },
+    }
+  } catch (e) {
+    throw new TypedToolError('internal', tr(ctx.locale, 'sandboxLogsFailed', { name, err: String(e) }))
   }
 }
 
