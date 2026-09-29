@@ -96,20 +96,20 @@ maybe('live e2e: workspace repo-* tools against a real Forgejo', () => {
 
     const edited = await call('repo-file-edit', {
       org: E2E_ORG, repo: E2E_REPO, path: scratch,
-      'start-line': 2, 'end-line': 2, content: 'LINE2', message: 'e2e: edit scratch',
+      'start-anchor-line': 1, 'end-anchor-line': 3, content: 'LINE2', message: 'e2e: edit scratch',
     })
     expect(edited.content).toContain('@@')
     expect(edited.content).toContain('-line2')
     expect(edited.content).toContain('+LINE2')
 
-    // ---- a second edit without re-read is refused ----
-    const stale = await agent
-      .callTool(tenant, session, 'workspace', 'repo-file-edit', `call-stale-${Date.now()}`, {
+    // ---- an edit with out-of-range anchors is refused ----
+    const bad = await agent
+      .callTool(tenant, session, 'workspace', 'repo-file-edit', `call-bad-${Date.now()}`, {
         org: E2E_ORG, repo: E2E_REPO, path: scratch,
-        'start-line': 2, 'end-line': 2, content: 'Z',
+        'start-anchor-line': 99, 'end-anchor-line': 100, content: 'Z',
       })
       .then(r => r.error)
-    expect(stale?.code).toBe('permission_denied')
+    expect(bad?.code).toBe('invalid_argument')
 
     // ---- log mentions the file ----
     const log = await call('repo-log', { org: E2E_ORG, repo: E2E_REPO, path: scratch })

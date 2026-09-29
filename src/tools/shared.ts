@@ -1,6 +1,6 @@
 import { TypedToolError } from '@abc-protocol/sdk'
 import { tr } from '../i18n.js'
-import { expandTilde, type AnchorError, type EditRangeError } from './text.js'
+import { expandTilde, type EditRangeError } from './text.js'
 
 /**
  * Return `args` with a leading `~` expanded in the given string path keys
@@ -24,82 +24,30 @@ export function expandPathArgs(
   return out ?? args
 }
 
-/** Clip long line text for an error message. */
-export function clip(s: string, n = 80): string {
-  return s.length > n ? `${s.slice(0, n)}…` : s
-}
-
-/** Build the typed error for a failed anchor check. */
-export function anchorError(
-  locale: string,
-  path: string,
-  kind: 'before' | 'after',
-  line: number,
-  total: number,
-  c: AnchorError,
-): TypedToolError {
-  const kindSide = anchorSide(locale, kind)
-  if (c.reason === 'missing') {
-    return new TypedToolError(
-      'retryable',
-      tr(locale, 'editAnchorMissing', {
-        kind,
-        kindSide,
-        line,
-        path,
-        actual: clip(c.actual),
-      }),
-    )
-  }
-  if (c.reason === 'mismatch') {
-    return new TypedToolError(
-      'retryable',
-      tr(locale, 'editAnchorMismatch', {
-        kind,
-        kindSide,
-        line,
-        path,
-        expected: clip(c.expected),
-        actual: clip(c.actual),
-      }),
-    )
-  }
-  return new TypedToolError(
-    'retryable',
-    tr(locale, 'editAnchorOutOfRange', { kind, kindSide, line, path, total }),
-  )
-}
-
-/** Localized word for which side of the edit region an anchor guards. */
-function anchorSide(locale: string, kind: 'before' | 'after'): string {
-  const zh = locale.toLowerCase().startsWith('zh')
-  if (kind === 'before') return zh ? '上方' : 'above'
-  return zh ? '下方' : 'below'
-}
-
-/** Map a resolved-range failure to its localized `invalid_argument` error. */
+/** Map a resolved-anchor failure to its localized `invalid_argument` error. */
 export function rangeError(
   locale: string,
   path: string,
   total: number,
   reason: EditRangeError,
-  startLine: number,
-  endLine: number,
+  startAnchor: number,
+  endAnchor: number,
 ): TypedToolError {
   switch (reason) {
-    case 'startLineMin':
-      return new TypedToolError('invalid_argument', tr(locale, 'startLineMin'))
-    case 'endLineBeforeStart':
-      return new TypedToolError('invalid_argument', tr(locale, 'editEndLineBeforeStart'))
-    case 'startLinePastEnd':
+    case 'startAnchorMin':
       return new TypedToolError(
         'invalid_argument',
-        tr(locale, 'editStartLinePastEnd', { start: startLine, path, total }),
+        tr(locale, 'editStartAnchorRange', { start: startAnchor, total }),
       )
-    case 'endLinePastEnd':
+    case 'endAnchorMax':
       return new TypedToolError(
         'invalid_argument',
-        tr(locale, 'editEndLinePastEnd', { end: endLine, path, total }),
+        tr(locale, 'editEndAnchorRange', { end: endAnchor, total }),
+      )
+    case 'anchorOrder':
+      return new TypedToolError(
+        'invalid_argument',
+        tr(locale, 'editAnchorOrder', { start: startAnchor, end: endAnchor }),
       )
   }
 }
@@ -113,6 +61,22 @@ export function strArg(args: Record<string, unknown>, key: string): string {
 /** True when a key is PRESENT (even with an empty-string value). */
 export function hasArg(args: Record<string, unknown>, key: string): boolean {
   return Object.hasOwn(args, key)
+}
+
+/**
+ * Read an anchor-line argument. A NUMBER is used as-is. An EMPTY STRING is the
+ * sentinel for the head/tail boundary (`emptyValue`); a missing or otherwise
+ * malformed value falls back to `emptyValue` too (the caller validates range).
+ */
+export function anchorArg(
+  args: Record<string, unknown>,
+  key: string,
+  emptyValue: number,
+): number {
+  const v = args[key]
+  if (typeof v === 'string' && v.trim() === '') return emptyValue
+  const n = numArg(args, key)
+  return n === undefined ? emptyValue : Math.trunc(n)
 }
 
 export function numArg(

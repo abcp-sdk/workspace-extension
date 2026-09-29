@@ -91,9 +91,9 @@ takes a required **`worker-name`**.
 
 | Tool | Notes |
 |---|---|
-| `sandbox-read` | text-only, `offset`/`limit` (default 200, max 1000), **line-numbered**, truncation marker; binary → error. Records the displayed lines as "seen" |
-| `sandbox-write` | overwrite with full content; rejected over 120 KiB; returns the numbered **whole** file; marks the whole file as "seen" |
-| `sandbox-edit` | 1-based line edit; `end-line < start-line` inserts, else replaces `[start-line, end-line]`; out-of-range clamps; returns a summary + unified diff. Enforces **read-before-edit** |
+| `sandbox-read` | text-only, `offset`/`limit` (default 200, max 1000), **line-numbered**, truncation marker; binary → error |
+| `sandbox-write` | overwrite with full content; rejected over 120 KiB; returns the numbered **whole** file |
+| `sandbox-edit` | anchor-line edit: `start-anchor-line`/`end-anchor-line` are the UNCHANGED lines just OUTSIDE the region (`0` = head, `total+1` = tail); the lines between them are replaced (empty region inserts, empty content deletes). Returns a summary + unified diff |
 | `sandbox-ls` | breadth-first tree levels 1..`depth` (default 3), `limit` default 200 / max 1000 |
 | `sandbox-download` | agent `file:<code>` → workspace path |
 | `sandbox-upload` | workspace path → agent `file:<code>` (agent derives the MIME) |
@@ -113,9 +113,9 @@ Every `repo-*` tool requires `forgejo-url`; auth is `forgejo-token` (PAT), or
 | `repo-explore` | list orgs, or an org's repos + branches (private included); optional `keyword` |
 | `repo-create-org` | create an organization (needs a credential allowed to create orgs) |
 | `repo-create-repo` | create a repository under an org or user; optional `auto-init` + `default-branch` |
-| `repo-read` | line-numbered text window; records seen lines + blob sha |
+| `repo-read` | line-numbered text window |
 | `repo-write` | create/overwrite one file (one commit), optimistic lock by blob sha |
-| `repo-edit` | 1-based line edit (one commit) with read-before-edit guard + unified diff |
+| `repo-edit` | anchor-line edit (one commit): `start-anchor-line`/`end-anchor-line` bracket the replaced region; unified diff |
 | `repo-delete` | delete one file (one commit) |
 | `repo-list` | list a directory (or a file) at a ref |
 | `repo-commit` | commit several files **atomically** (create/update/delete), optional `new-branch` |
@@ -131,24 +131,19 @@ Every `repo-*` tool requires `forgejo-url`; auth is `forgejo-token` (PAT), or
 | `repo-tags` / `repo-tag-create` | list / create tags |
 | `repo-mr-create` / `repo-mr-list` / `repo-mr-comment` / `repo-mr-merge` | pull requests |
 
-## Read-before-edit
+## Anchor-line edit
 
-Both `sandbox-edit` and `repo-edit` are guarded so a session can only change
-what it has actually seen:
+Both `sandbox-edit` and `repo-edit` edit by ANCHOR LINE NUMBERS. The edit region
+is the lines STRICTLY BETWEEN two anchors that are the UNCHANGED lines just
+outside it:
 
-- **Seen required.** The file must have been `read` (or `write`n) in this
-  session — otherwise `permission_denied` ("call read first").
-- **Range-limited.** Only the line ranges the session has seen may be edited.
-- **Freshness.** If the file changed since that read, the edit is refused with
-  `retryable` ("read again"). The token is the sandbox file's sha256 / the repo
-  file's git blob sha.
-- **Invalidate on edit.** A successful edit clears the file's seen state, so the
-  next edit requires a fresh read.
+- `start-anchor-line`: the unchanged line ABOVE the region (`0` = the head).
+- `end-anchor-line`: the unchanged line BELOW the region (`total + 1` = the tail).
 
-State is one KV entry per `(tenant, session)` in the `workspace-edit-state`
-bucket, keyed `t.<tenant>.<sessionToken>`, holding `{key → {sha256, ranges}}`
-where `key` is the sandbox path or `org/repo@ref:path`. Shared across replicas,
-restart-safe, deleted on session deletion.
+So insert between lines 27 and 28 with `27`/`28`; replace lines 28..29 with
+`27`/`30`; prepend with `0`/`1`; append with `total`/`total + 1`. An empty
+region inserts; empty `content` deletes. Out-of-range anchors are rejected
+(never clamped). There is no read-before-edit requirement.
 
 ## Configuration
 

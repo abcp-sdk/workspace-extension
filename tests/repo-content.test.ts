@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { TypedToolError } from '@abc-protocol/sdk'
 import { Forgejo } from '../src/forgejo.js'
 import type { WorkspaceDeps } from '../src/deps.js'
-import type { SessionEditState } from '../src/tools/edit-state.js'
 import {
   repoEdit,
   repoRead,
@@ -48,90 +47,66 @@ function fakeRepo() {
 }
 
 function ctx(forgejo: Forgejo): RepoCtx {
-  let state: SessionEditState = {}
-  const deps = {
-    loadEditState: async () => state,
-    saveEditState: async (_t, _s, next: SessionEditState) => {
-      state = next
-    },
-  } as unknown as WorkspaceDeps
+  const deps = {} as unknown as WorkspaceDeps
   return { forgejo, deps, tenant: 't', session: 'o:r:feat', locale: 'en' }
 }
 
-describe('repo read-before-edit guard', () => {
-  it('refuses edit before read', async () => {
-    const { forgejo } = fakeRepo()
-    const c = ctx(forgejo)
-    await repoWrite(c, { org: 'o', repo: 'r', path: 'a.txt', content: '1\n2\n3\n' })
-    // write marks seen with sha '', so a fresh read is needed for freshness.
-    const err = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 2, 'end-line': 2, content: 'X', 'anchor-before': '1', 'anchor-after': '3' }).catch(e => e)
-    expect(err).toBeInstanceOf(TypedToolError)
-    // After a write the seen sha is '' which won't match the blob -> retryable
-    // (or permission_denied if never recorded). Either way: refused.
-    expect(['permission_denied', 'retryable']).toContain((err as TypedToolError).code)
-  })
-
-  it('read then edit only seen lines; edit invalidates', async () => {
+describe('repo anchor-line edit', () => {
+  it('replaces the region between two anchors (no read needed)', async () => {
     const { files, forgejo } = fakeRepo()
     const c = ctx(forgejo)
-    files.set('a.txt', { text: '1\n2\n3\n4\n5\n', sha: 'base' })
-
-    // Read only lines 2-3.
-    await repoRead(c, { org: 'o', repo: 'r', path: 'a.txt', offset: 1, limit: 2 })
-    // Editing line 5 is refused (neighbor 4 matches, but 5 is unseen).
-    const err = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 5, 'end-line': 5, content: 'X', 'anchor-before': '4', 'anchor-after': '' }).catch(e => e)
-    expect((err as TypedToolError).code).toBe('permission_denied')
-
-    // Editing lines 2-3 succeeds and invalidates (neighbors 1 and 4).
-    await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 2, 'end-line': 3, content: 'X', 'anchor-before': '1', 'anchor-after': '4' })
-    expect(files.get('a.txt')!.text).toBe('1\nX\n4\n5\n')
-
-    // Second edit without re-read is refused.
-    const err2 = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 2, 'end-line': 2, content: 'Y', 'anchor-before': '1', 'anchor-after': '4' }).catch(e => e)
-    expect((err2 as TypedToolError).code).toBe('permission_denied')
+    files.set('a.txt', { text: '1\n2\n3\n4\n', sha: 'base' })
+    await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 4, content: 'X' })
+    expect(files.get('a.txt')!.text).toBe('1\nX\n4\n')
   })
 
-  it('detects a stale read (blob changed underneath)', async () => {
+  it('inserts between adjacent anchors', async () => {
     const { files, forgejo } = fakeRepo()
     const c = ctx(forgejo)
-    files.set('a.txt', { text: '1\n2\n', sha: 's1' })
-    await repoRead(c, { org: 'o', repo: 'r', path: 'a.txt' })
-    files.set('a.txt', { text: '1\nCHANGED\n', sha: 's2' })
-    const err = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 2, 'end-line': 2, content: 'X', 'anchor-before': '1', 'anchor-after': '' }).catch(e => e)
-    expect((err as TypedToolError).code).toBe('retryable')
+    files.set('a.txt', { text: '1\n2\n3\n', sha: 'base' })
+    await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 2, content: 'X' })
+    expect(files.get('a.txt')!.text).toBe('1\nX\n2\n3\n')
+  })
+
+  it('prepends at the head and appends at the tail', async () => {
+    const { files, forgejo } = fakeRepo()
+    const c = ctx(forgejo)
+    files.set('a.txt', { text: '1\n2\n', sha: 'base' })
+    await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 0, 'end-anchor-line': 1, content: 'HEAD' })
+    expect(files.get('a.txt')!.text).toBe('HEAD\n1\n2\n')
+    await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 3, 'end-anchor-line': '', content: 'TAIL' })
+    expect(files.get('a.txt')!.text).toBe('HEAD\n1\n2\nTAIL\n')
   })
 
   it('returns a unified diff on edit', async () => {
     const { files, forgejo } = fakeRepo()
     const c = ctx(forgejo)
     files.set('a.txt', { text: '1\n2\n3\n', sha: 's1' })
-    await repoRead(c, { org: 'o', repo: 'r', path: 'a.txt' })
-    const r = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 2, 'end-line': 2, content: 'X', 'anchor-before': '1', 'anchor-after': '3' })
+    const r = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, content: 'X' })
     expect(r.content).toContain('--- a/a.txt')
     expect(r.content).toContain('-2')
     expect(r.content).toContain('+X')
   })
 
-  it('rejects a mismatched neighbor anchor (no commit)', async () => {
+  it('rejects an out-of-range anchor (no commit)', async () => {
     const { files, forgejo } = fakeRepo()
     const c = ctx(forgejo)
     files.set('a.txt', { text: 'alpha\nbeta\n', sha: 's1' })
-    await repoRead(c, { org: 'o', repo: 'r', path: 'a.txt' })
-    // Replace line 2; above='alpha', below does not exist ('' ok). Give a bad below.
-    const err = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 2, 'end-line': 2, content: 'X', 'anchor-before': 'WRONG', 'anchor-after': '' }).catch(e => e)
-    expect((err as TypedToolError).code).toBe('retryable')
+    const err = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 5, 'end-anchor-line': 6, content: 'X' }).catch(e => e)
+    expect(err).toBeInstanceOf(TypedToolError)
+    expect((err as TypedToolError).code).toBe('invalid_argument')
     expect(files.get('a.txt')!.text).toBe('alpha\nbeta\n')
   })
 
-  it('appends at the tail with an empty anchor-after', async () => {
+  it('reports no changes on a no-op edit', async () => {
     const { files, forgejo } = fakeRepo()
     const c = ctx(forgejo)
     files.set('a.txt', { text: '1\n2\n', sha: 's1' })
-    await repoRead(c, { org: 'o', repo: 'r', path: 'a.txt' })
-    await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-line': 3, 'end-line': 2, content: '3', 'anchor-before': '2', 'anchor-after': '' })
-    expect(files.get('a.txt')!.text).toBe('1\n2\n3\n')
+    const r = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, content: '2' })
+    expect(String(r.content)).toContain('No changes')
   })
 })
+
 
 describe('repo naming validation', () => {
   it('rejects illegal org/repo/ref names', async () => {

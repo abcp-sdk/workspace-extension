@@ -7,22 +7,14 @@ import { tr } from '../i18n.js'
 import { capLines, humanSize, MAX_RESULT_LINES, truncationNote } from './output.js'
 import { unifiedDiff } from './diff.js'
 import {
-  formatRanges,
-  invalidate,
-  rangesCover,
-  recordSeen,
-  seenFor,
-} from './edit-state.js'
-import {
-  checkAnchor,
+  applyEdit,
   joinFileLines,
   numberLines,
   resolveEditTarget,
   toFileLines,
-  touchedRange,
   windowLines,
 } from './text.js'
-import { anchorError, hasArg, numArg, rangeError, requireArg, strArg } from './shared.js'
+import { anchorArg, numArg, rangeError, requireArg, strArg } from './shared.js'
 
 /** Everything a repo-* tool handler needs at call time. */
 export interface RepoCtx {
@@ -209,21 +201,10 @@ export async function repoRead(
       tr(ctx.locale, 'showingLines', { start: win.start + 1, end, total: win.total }) +
       (win.truncated ? tr(ctx.locale, 'moreLinesAvailable') : '')
   }
-  // Record exactly the displayed lines, keyed by org/repo@ref:path, with the
-  // git blob sha as the freshness token.
-  const state = await ctx.deps.loadEditState(ctx.tenant, ctx.session)
-  const next = recordSeen(
-    state,
-    repoKey(r, path),
-    got.sha,
-    shown > 0 ? [[win.start + 1, win.start + shown]] : [],
-    Date.now(),
-  )
-  await ctx.deps.saveEditState(ctx.tenant, ctx.session, next)
   return { content, data: { org: r.org, repo: r.repo, ref: r.ref, path, sha: got.sha, total_lines: win.total, start: win.start, shown } }
 }
 
-/** `repo-file-write`: overwrite one file (one commit); marks the whole file seen. */
+/** `repo-file-write`: overwrite one file (one commit). */
 export async function repoWrite(
   ctx: RepoCtx,
   args: Record<string, unknown>,
@@ -255,16 +236,6 @@ export async function repoWrite(
     ...(baseSha !== '' ? { sha: baseSha } : {}),
     locale: ctx.locale,
   })
-  const file = toFileLines(content)
-  const state = await ctx.deps.loadEditState(ctx.tenant, ctx.session)
-  const next = recordSeen(
-    state,
-    repoKey(r, path),
-    '', // sha unknown until re-read; force a read before edit
-    file.lines.length > 0 ? [[1, file.lines.length]] : [],
-    Date.now(),
-  )
-  await ctx.deps.saveEditState(ctx.tenant, ctx.session, next)
   const fanned = ctx.fanout !== undefined ? await ctx.fanout(r.org, r.repo, r.ref, res.sha) : 0
   const note = fanned > 0 ? `\n${tr(ctx.locale, 'fanoutUpdated', { count: fanned })}` : ''
   const diff = unifiedDiff(before, content, path)
@@ -274,75 +245,36 @@ export async function repoWrite(
   }
 }
 
-/** `repo-file-edit`: line edit with read-before-edit guard + unified diff. */
+/** `repo-file-edit`: anchor-line edit (one commit) + unified diff. */
 export async function repoEdit(
   ctx: RepoCtx,
   args: Record<string, unknown>,
 ): Promise<ToolResultData> {
   const r = writeRepoRef(ctx, args)
   const path = requireArg(args, 'path', ctx.locale)
-  const startLine = Math.trunc(numArg(args, 'start-line') ?? 0)
-  const endLine = Math.trunc(numArg(args, 'end-line') ?? 0)
   const content = strArg(args, 'content')
-  const anchorBefore = strArg(args, 'anchor-before')
-  const anchorAfter = strArg(args, 'anchor-after')
   const message = strArg(args, 'message') || `edit ${path}`
-  if (startLine < 1) throw new TypedToolError('invalid_argument', tr(ctx.locale, 'startLineMin'))
-  // Both anchors are REQUIRED arguments (present, though possibly "").
-  for (const key of ['anchor-before', 'anchor-after']) {
-    if (!hasArg(args, key)) {
-      throw new TypedToolError('invalid_argument', tr(ctx.locale, 'editAnchorRequired', { key }))
-    }
-  }
-
-  const key = repoKey(r, path)
-  const state = await ctx.deps.loadEditState(ctx.tenant, ctx.session)
-  const seen = seenFor(state, key)
-  if (seen === null) throw new TypedToolError('permission_denied', tr(ctx.locale, 'editNeedsRead', { path }))
 
   const got = await ctx.forgejo.getContents(r.org, r.repo, path, r.ref, ctx.locale)
   if (got.kind !== 'file') throw new TypedToolError('not_found', tr(ctx.locale, 'forgejoNotFound', { msg: path }))
-  if (got.sha !== seen.sha256) throw new TypedToolError('retryable', tr(ctx.locale, 'editStaleRead', { path }))
 
   const file = toFileLines(got.text)
   const total = file.lines.length
   const inserted = content === '' ? [] : toFileLines(content).lines
 
-  // Strict bounds (no silent clamping) — anchors depend on exact line numbers.
-  const resolved = resolveEditTarget(startLine, endLine, total)
-  if (!resolved.ok) {
-    throw rangeError(ctx.locale, path, total, resolved.reason, startLine, endLine)
-  }
-  // Anchor validation: the UNCHANGED lines just outside the edit region — the
-  // line ABOVE it (start-line - 1) and the line BELOW it (end-line + 1) — must
-  // match the caller's copy.
-  const beforeLine = startLine - 1
-  const afterLine = endLine + 1
-  const beforeCheck = checkAnchor(file.lines, beforeLine, anchorBefore, total)
-  if (!beforeCheck.ok) throw anchorError(ctx.locale, path, 'before', beforeLine, total, beforeCheck)
-  const afterCheck = checkAnchor(file.lines, afterLine, anchorAfter, total)
-  if (!afterCheck.ok) throw anchorError(ctx.locale, path, 'after', afterLine, total, afterCheck)
+  // `start-anchor-line` / `end-anchor-line` are required. An EMPTY STRING is the
+  // sentinel for the head (start => 0) and the tail (end => total + 1).
+  const startAnchor = anchorArg(args, 'start-anchor-line', 0)
+  const endAnchor = anchorArg(args, 'end-anchor-line', total + 1)
 
-  const { target } = resolved
-  let next: string[]
-  if (target.kind === 'insert') {
-    const at = target.at
-    next = [...file.lines.slice(0, at), ...inserted, ...file.lines.slice(at)]
-  } else {
-    next = [...file.lines.slice(0, target.s), ...inserted, ...file.lines.slice(target.e)]
+  // Strict bounds (no silent clamping).
+  const resolved = resolveEditTarget(startAnchor, endAnchor, total)
+  if (!resolved.ok) {
+    throw rangeError(ctx.locale, path, total, resolved.reason, startAnchor, endAnchor)
   }
-  const touched = touchedRange(target, total)
-  if (!rangesCover(seen.ranges, touched[0], touched[1])) {
-    throw new TypedToolError(
-      'permission_denied',
-      tr(ctx.locale, 'editRangeNotRead', {
-        path,
-        start: touched[0],
-        end: Math.max(touched[0], touched[1]),
-        seen: formatRanges(seen.ranges),
-      }),
-    )
-  }
+
+  const next = applyEdit(file.lines, resolved.target, inserted)
+
   const out = joinFileLines({ lines: next, trailingNewline: file.trailingNewline })
   if (out === got.text) {
     return { content: tr(ctx.locale, 'repoNoChanges', { path, org: r.org, repo: r.repo, ref: r.ref || 'HEAD' }) }
@@ -353,7 +285,6 @@ export async function repoEdit(
     sha: got.sha,
     locale: ctx.locale,
   })
-  await ctx.deps.saveEditState(ctx.tenant, ctx.session, invalidate(state, key))
 
   const diff = unifiedDiff(got.text, out, path)
   const summary = tr(ctx.locale, 'repoEditSummary', {
@@ -391,8 +322,6 @@ export async function repoDelete(
     ...(baseSha !== '' ? { sha: baseSha } : {}),
     locale: ctx.locale,
   })
-  const state = await ctx.deps.loadEditState(ctx.tenant, ctx.session)
-  await ctx.deps.saveEditState(ctx.tenant, ctx.session, invalidate(state, repoKey(r, path)))
   const fanned = ctx.fanout !== undefined ? await ctx.fanout(r.org, r.repo, r.ref, res.sha) : 0
   const note = fanned > 0 ? `\n${tr(ctx.locale, 'fanoutUpdated', { count: fanned })}` : ''
   return {
@@ -435,14 +364,6 @@ export async function repoCommit(
     throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'message' }))
   }
   const res = await ctx.forgejo.commitStaged(r.org, r.repo, r.ref, message, ctx.locale)
-  // The commit rewinds/advances HEAD; invalidate all seen state for this branch.
-  let state = await ctx.deps.loadEditState(ctx.tenant, ctx.session)
-  for (const key of Object.keys(state)) {
-    if (key.startsWith(`${r.org}/${r.repo}@`) || key.startsWith(`${r.org}/${r.repo}@${r.ref}:`)) {
-      state = invalidate(state, key)
-    }
-  }
-  await ctx.deps.saveEditState(ctx.tenant, ctx.session, state)
   const fanned = ctx.fanout !== undefined ? await ctx.fanout(r.org, r.repo, r.ref, res.sha) : 0
   const note = fanned > 0 ? `\n${tr(ctx.locale, 'fanoutUpdated', { count: fanned })}` : ''
   return {

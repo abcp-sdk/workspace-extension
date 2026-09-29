@@ -387,37 +387,17 @@ export const CATALOG = {
     en: '{key} is required',
     zh: '缺少 {key}。',
   },
-  startLineMin: {
-    en: 'start-line must be >= 1',
-    zh: 'start-line 必须 >= 1。',
+  editStartAnchorRange: {
+    en: 'start-anchor-line {start} is out of range: it must be between 0 and the number of lines ({total}); use 0 to insert at the head.',
+    zh: 'start-anchor-line {start} 越界：必须在 0 到总行数（{total}）之间；在文件头插入请用 0。',
   },
-  editEndLineBeforeStart: {
-    en: 'end-line must be >= start-line - 1 (use end-line = start-line - 1 to insert)',
-    zh: 'end-line 必须 >= start-line - 1（插入请用 end-line = start-line - 1）。',
+  editEndAnchorRange: {
+    en: 'end-anchor-line {end} is out of range: it must be between 1 and the number of lines + 1 ({total} + 1); use total + 1 to append at the tail.',
+    zh: 'end-anchor-line {end} 越界：必须在 1 到总行数 + 1（{total} + 1）之间；在文件尾追加请用总行数 + 1。',
   },
-  editStartLinePastEnd: {
-    en: "start-line {start} is past the end of '{path}' ({total} lines); the largest valid start-line is {total} for a replace or {total} + 1 for an append.",
-    zh: "'{path}' 只有 {total} 行，start-line {start} 越界；替换最大为 {total}，追加最大为 {total} + 1。",
-  },
-  editEndLinePastEnd: {
-    en: "end-line {end} is past the end of '{path}' ({total} lines); use the last line number ({total}) or fewer.",
-    zh: "'{path}' 只有 {total} 行，end-line {end} 越界；请不超过最后一行（{total}）。",
-  },
-  editAnchorMissing: {
-    en: "the anchor-{kind} line (line {line} of '{path}', the unchanged line {kind} the edit region) is missing; pass its current text, or an empty string when that line does not exist. That line is: {actual}",
-    zh: "缺少 anchor-{kind}（'{path}' 第 {line} 行，即编辑区{kindSide}的不变行）；请传该行当前原文，该行不存在时传空字符串。该行内容：{actual}",
-  },
-  editAnchorMismatch: {
-    en: "anchor-{kind} (line {line} of '{path}', the unchanged line {kind} the edit region) does not match: expected {expected}, found {actual}. The file or line numbers changed; call read again.",
-    zh: "anchor-{kind}（'{path}' 第 {line} 行，即编辑区{kindSide}的不变行）不匹配：期望 {expected}，实际 {actual}。文件或行号已变化；请重新 read。",
-  },
-  editAnchorOutOfRange: {
-    en: "anchor-{kind} was given for line {line}, which does not exist in '{path}' ({total} lines); pass an empty string instead.",
-    zh: "'{path}'（{total} 行）中不存在第 {line} 行，anchor-{kind} 应传空字符串。",
-  },
-  editAnchorRequired: {
-    en: "'{key}' is a required argument; pass the current text of the line it anchors, or an empty string when that line does not exist.",
-    zh: "'{key}' 是必填参数；请传其锚定行的当前原文，该行不存在时传空字符串。",
+  editAnchorOrder: {
+    en: 'end-anchor-line ({end}) must be greater than start-anchor-line ({start}); the two anchor the unchanged lines just outside the edit region.',
+    zh: 'end-anchor-line（{end}）必须大于 start-anchor-line（{start}）；两者锚定编辑区两侧的不变行。',
   },
   mailBranchMissing: {
     en: "branch '{branch}' does not exist in the repository (branch <-> session is 1:1)",
@@ -482,18 +462,6 @@ export const CATALOG = {
   invalidName: {
     en: "'{value}' is not a valid {key} (allowed: letters, digits, . _ / -; no ':', '..', '//', or trailing '.'/'.lock')",
     zh: "'{value}' 不是合法的 {key}（允许：字母、数字、. _ / -；不得含 ':'、'..'、'//' 或以 '.'/'.lock' 结尾）。",
-  },
-  editNeedsRead: {
-    en: "'{path}' has not been read in this session; call read first (read the lines you intend to edit).",
-    zh: "本会话尚未读取 '{path}'；请先调用 read 工具（读取你要编辑的行）。",
-  },
-  editStaleRead: {
-    en: "'{path}' changed since it was last read; call read again before editing (line numbers may have shifted).",
-    zh: "'{path}' 自上次读取后已变化；请重新调用 read 工具后再编辑（行号可能已改变）。",
-  },
-  editRangeNotRead: {
-    en: "lines {start}-{end} of '{path}' were not read; call read for that range first (seen: {seen}).",
-    zh: "尚未读取 '{path}' 的第 {start}-{end} 行；请先调用 read 工具读取该范围（已读：{seen}）。",
   },
   tenantRequired: {
     en: '{op}: tenant required',

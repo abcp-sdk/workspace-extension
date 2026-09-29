@@ -8,9 +8,16 @@ import {
   MAX_RESULT_LINES,
   truncationNote,
 } from './output.js'
-import { anchorError, baseName, hasArg, numArg, rangeError, requireArg, strArg } from './shared.js'
 import {
-  checkAnchor,
+  anchorArg,
+  baseName,
+  numArg,
+  rangeError,
+  requireArg,
+  strArg,
+} from './shared.js'
+import {
+  applyEdit,
   joinFileLines,
   looksTextual,
   normalizeRel,
@@ -18,17 +25,8 @@ import {
   resolveEditTarget,
   splitLines,
   toFileLines,
-  touchedRange,
 } from './text.js'
 import { unifiedDiff } from './diff.js'
-import {
-  formatRanges,
-  hashBytes,
-  invalidate,
-  rangesCover,
-  recordSeen,
-  seenFor,
-} from './edit-state.js'
 import { tr } from '../i18n.js'
 
 /** Everything a file-tool handler needs at call time. */
@@ -96,23 +94,6 @@ export async function readFile(
       tr(ctx.locale ?? 'en', 'showingLines', { start: win.start + 1, end, total: win.total }) +
       (win.truncated ? tr(ctx.locale ?? 'en', 'moreLinesAvailable') : '')
   }
-  // Record exactly the lines DISPLAYED (after the byte/line cap), so a later
-  // edit may only touch what the session has actually seen. An empty result
-  // still records an entry (ranges []), which is what allows inserting into an
-  // empty file. The hash covers the FETCHED window (see edit-state).
-  {
-    const state = await ctx.deps.loadEditState(ctx.tenant, ctx.session)
-    const ranges = shown > 0 ? [[win.start + 1, win.start + shown] as const] : []
-    const next = recordSeen(
-      state,
-      path,
-      hashBytes(res.content),
-      ranges.map(r => [r[0], r[1]] as [number, number]),
-      Date.now(),
-      { start: winStart, end: winStart + lines.length, totalLines: total },
-    )
-    await ctx.deps.saveEditState(ctx.tenant, ctx.session, next)
-  }
   return { content, data: { total_lines: win.total, start: win.start, shown } }
 }
 
@@ -169,17 +150,6 @@ export async function writeFile(
     body += truncationNote(capped, capped.kept.length, numbered.length, locale)
   }
 
-  // The whole file is now seen; a later edit may touch any line.
-  const state = await ctx.deps.loadEditState(ctx.tenant, ctx.session)
-  const next = recordSeen(
-    state,
-    path,
-    hashBytes(read.content),
-    file.lines.length > 0 ? [[1, file.lines.length]] : [],
-    Date.now(),
-  )
-  await ctx.deps.saveEditState(ctx.tenant, ctx.session, next)
-
   const summary = tr(locale, 'wroteFile', {
     bytes: read.content.length,
     path,
@@ -202,29 +172,16 @@ export async function writeFile(
 
 /**
  * `edit`: line-oriented replace/insert over the SAME line model as `read`
- * (1-based, `[start-line, end-line]` inclusive). `end-line === start-line - 1`
- * inserts before `start-line`; otherwise it replaces `[start-line, end-line]`.
- * Line numbers are NEVER silently clamped: `start-line` may be `total + 1` to
- * append at EOF, and `end-line === start-line - 1` inserts (including the
- * `[1, 0]` head insert and the `[total+1, total]` tail append); any other
- * out-of-range value is rejected.
- *
- * ANCHORS: the caller must also pass `anchor-before` / `anchor-after` — its
- * own copy of the CURRENT text of the UNCHANGED lines immediately OUTSIDE the
- * edit region: the line ABOVE it (line `start-line - 1`) and the line BELOW it
- * (line `end-line + 1`), taken from `read` output with the line-number prefix
- * removed. Both arguments are always required; when a side does not exist
- * (start-line == 1 has no line above; end-line == total has no line below) the
- * caller MUST pass an empty string. Comparison is `trim()`-based; a mismatch
- * means the line numbers no longer point where the caller believes, so the
- * edit is refused (retryable) WITHOUT writing. Because the anchors are the
- * edit's unchanged neighbors, any line-count shift above or below the region
- * is caught before writing.
- *
- * READ-BEFORE-EDIT: the session may only edit a file it has seen via `read`
- * (or written), only within the line ranges it has seen, and only while the
- * file is unchanged since that read. A successful edit CLEARS the seen state
- * (the caller must read again, because line numbers shift).
+ * (1-based). The edit region is defined by TWO ANCHORS that are the UNCHANGED
+ * lines immediately OUTSIDE it:
+ *   - `start-anchor-line`: the 1-based line number of the unchanged line ABOVE
+ *     the region (`0` = the head of the file).
+ *   - `end-anchor-line`: the unchanged line BELOW the region (`total + 1` = the
+ *     tail of the file).
+ * The lines STRICTLY BETWEEN them are replaced by `content`; an empty region
+ * inserts, empty `content` deletes. Anchors are NEVER silently clamped:
+ * `start-anchor-line` must be in `[0, total]`, `end-anchor-line` in
+ * `[1, total + 1]`, and `end-anchor-line >= start-anchor-line + 1`.
  *
  * Returns a localized one-line summary, a blank line, then a unified diff.
  */
@@ -234,96 +191,26 @@ export async function editFile(
 ): Promise<ToolResultData> {
   const path = requireArg(args, 'path', ctx.locale)
   const locale = ctx.locale ?? 'en'
-  const startLine = Math.trunc(numArg(args, 'start-line') ?? 0)
-  const endLine = Math.trunc(numArg(args, 'end-line') ?? 0)
   const content = strArg(args, 'content')
-  const anchorBefore = strArg(args, 'anchor-before')
-  const anchorAfter = strArg(args, 'anchor-after')
-
-  // Both anchors are REQUIRED arguments (present, though possibly ""): a
-  // missing key is a caller error, not a silent empty anchor.
-  for (const key of ['anchor-before', 'anchor-after']) {
-    if (!hasArg(args, key)) {
-      throw new TypedToolError(
-        'invalid_argument',
-        tr(locale, 'editAnchorRequired', { key }),
-      )
-    }
-  }
-
-  // ---- read-before-edit guard ----
-  const state = await ctx.deps.loadEditState(ctx.tenant, ctx.session)
-  const seen = seenFor(state, path)
-  if (seen === null) {
-    throw new TypedToolError('permission_denied', tr(locale, 'editNeedsRead', { path }))
-  }
 
   const read = await ctx.client.fileRead({ path })
-  // Staleness: for a WINDOWED read record, re-fetch the SAME window and compare
-  // hashes (byte-identical domain). Any line-count change shifts the window's
-  // content (hash differs), and in-window edits differ too — as sound as the
-  // legacy whole-file hash. Legacy/whole-file records compare the whole bytes.
-  const stale = await (async () => {
-    if (seen.winStart !== undefined && seen.winEnd !== undefined) {
-      const w = await ctx.client.fileRead({
-        path,
-        startLine: seen.winStart,
-        endLine: seen.winEnd,
-      })
-      return hashBytes(w.content) !== seen.sha256
-    }
-    return hashBytes(read.content) !== seen.sha256
-  })()
-  if (stale) {
-    throw new TypedToolError('retryable', tr(locale, 'editStaleRead', { path }))
-  }
   const current = new TextDecoder('utf-8', { fatal: false }).decode(read.content)
   const file = toFileLines(current)
   const total = file.lines.length
   const inserted = content === '' ? [] : toFileLines(content).lines
 
-  // Strict bounds (no silent clamping) — anchors depend on exact line numbers.
-  const resolved = resolveEditTarget(startLine, endLine, total)
+  // `start-anchor-line` / `end-anchor-line` are required. An EMPTY STRING is the
+  // sentinel for the head (start => 0) and the tail (end => total + 1).
+  const startAnchor = anchorArg(args, 'start-anchor-line', 0)
+  const endAnchor = anchorArg(args, 'end-anchor-line', total + 1)
+
+  // Strict bounds (no silent clamping).
+  const resolved = resolveEditTarget(startAnchor, endAnchor, total)
   if (!resolved.ok) {
-    throw rangeError(locale, path, total, resolved.reason, startLine, endLine)
+    throw rangeError(locale, path, total, resolved.reason, startAnchor, endAnchor)
   }
 
-  // Anchor validation: the UNCHANGED lines just outside the edit region — the
-  // line ABOVE it (start-line - 1) and the line BELOW it (end-line + 1) — must
-  // match the caller's copy. A mismatch means the line numbers no longer point
-  // where the caller believes, so the edit is refused without writing.
-  const beforeLine = startLine - 1
-  const afterLine = endLine + 1
-  const beforeCheck = checkAnchor(file.lines, beforeLine, anchorBefore, total)
-  if (!beforeCheck.ok) {
-    throw anchorError(locale, path, 'before', beforeLine, total, beforeCheck)
-  }
-  const afterCheck = checkAnchor(file.lines, afterLine, anchorAfter, total)
-  if (!afterCheck.ok) {
-    throw anchorError(locale, path, 'after', afterLine, total, afterCheck)
-  }
-
-  const { target } = resolved
-  let next: string[]
-  if (target.kind === 'insert') {
-    const at = target.at
-    next = [...file.lines.slice(0, at), ...inserted, ...file.lines.slice(at)]
-  } else {
-    next = [...file.lines.slice(0, target.s), ...inserted, ...file.lines.slice(target.e)]
-  }
-  const touched = touchedRange(target, total)
-
-  if (!rangesCover(seen.ranges, touched[0], touched[1])) {
-    throw new TypedToolError(
-      'permission_denied',
-      tr(locale, 'editRangeNotRead', {
-        path,
-        start: touched[0],
-        end: Math.max(touched[0], touched[1]),
-        seen: formatRanges(seen.ranges),
-      }),
-    )
-  }
+  const next = applyEdit(file.lines, resolved.target, inserted)
 
   const out = joinFileLines({ lines: next, trailingNewline: file.trailingNewline })
   if (out === current) {
@@ -335,8 +222,6 @@ export async function editFile(
   if (!wrote.ok) {
     throw new TypedToolError('internal', tr(locale, 'writeFailed', { path }))
   }
-  // Line numbers may have shifted: require a fresh read before the next edit.
-  await ctx.deps.saveEditState(ctx.tenant, ctx.session, invalidate(state, path))
 
   const diff = unifiedDiff(current, out, path)
   const summary = tr(locale, 'editSummary', {
@@ -446,9 +331,6 @@ export async function deleteFile(
   if (!res.ok) {
     throw new TypedToolError('internal', tr(locale, 'deleteFailed', { path }))
   }
-  // A deleted file's seen state is meaningless now.
-  const state = await ctx.deps.loadEditState(ctx.tenant, ctx.session)
-  await ctx.deps.saveEditState(ctx.tenant, ctx.session, invalidate(state, path))
   return { content: tr(locale, 'deletedPath', { path }), data: { path, deleted: true } }
 }
 

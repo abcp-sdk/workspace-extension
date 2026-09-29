@@ -127,81 +127,60 @@ export function expandTilde(
   return joinSlash(base, p.slice(2))
 }
 
-/** Why an edit's line bounds were rejected. */
+/** Why an edit's anchor pair was rejected. */
 export type EditRangeError =
-  | 'startLineMin'
-  | 'endLineBeforeStart'
-  | 'startLinePastEnd'
-  | 'endLinePastEnd'
-
-/** The resolved 0-based edit target over a file's line model. */
-export type EditTarget =
-  | { kind: 'insert'; at: number }
-  | { kind: 'replace'; s: number; e: number }
+  | 'startAnchorMin'
+  | 'endAnchorMax'
+  | 'anchorOrder'
 
 /**
- * Resolve an edit's `[start-line, end-line]` against a file of `total` lines
- * into a concrete target, WITHOUT silently clamping (anchors require exact
- * line numbers). Two modes:
- *  - INSERT: `end-line === start-line - 1` inserts before `start-line`
- *    (`start-line` may be `total + 1` to append at EOF; `1` to prepend).
- *  - REPLACE: `end-line >= start-line`, both within `[1, total]`.
- * Anything else is an error (never a silent clamp).
+ * A resolved edit target over a file's line model. The edit region is the
+ * lines STRICTLY BETWEEN the two anchors: 1-based `[s+1, e-1]` inclusive. An
+ * empty region (`e === s + 1`) is an INSERT at 0-based index `s`.
+ */
+export interface EditTarget {
+  /** `start-anchor-line` (0-based cut index == the 1-based anchor line). */
+  s: number
+  /** `end-anchor-line` (the 1-based anchor line below the region). */
+  e: number
+}
+
+/**
+ * Resolve an edit's anchor pair against a file of `total` lines, WITHOUT
+ * silently clamping. `start-anchor-line` is the 1-based line number of the
+ * UNCHANGED line immediately ABOVE the edit region (`0` = before line 1);
+ * `end-anchor-line` is the UNCHANGED line immediately BELOW it (`total + 1` =
+ * after the last line). The region replaced is the lines strictly between
+ * them. Valid ranges: start in `[0, total]`, end in `[1, total + 1]`, and
+ * `end >= start + 1`.
+ *
+ *   insert between lines 27 and 28  -> start 27, end 28
+ *   replace lines 28..29            -> start 27, end 30
+ *   prepend at the head             -> start 0,  end 1
+ *   append at the tail              -> start total, end total + 1
  */
 export function resolveEditTarget(
-  startLine: number,
-  endLine: number,
+  startAnchor: number,
+  endAnchor: number,
   total: number,
 ): { ok: true; target: EditTarget } | { ok: false; reason: EditRangeError } {
-  if (startLine < 1) return { ok: false, reason: 'startLineMin' }
-  if (endLine === startLine - 1) {
-    if (startLine > total + 1) return { ok: false, reason: 'startLinePastEnd' }
-    return { ok: true, target: { kind: 'insert', at: startLine - 1 } }
-  }
-  if (endLine < startLine - 1) return { ok: false, reason: 'endLineBeforeStart' }
-  if (startLine > total) return { ok: false, reason: 'startLinePastEnd' }
-  if (endLine > total) return { ok: false, reason: 'endLinePastEnd' }
-  return { ok: true, target: { kind: 'replace', s: startLine - 1, e: endLine } }
+  if (startAnchor < 0 || startAnchor > total)
+    return { ok: false, reason: 'startAnchorMin' }
+  if (endAnchor < 1 || endAnchor > total + 1)
+    return { ok: false, reason: 'endAnchorMax' }
+  if (endAnchor < startAnchor + 1) return { ok: false, reason: 'anchorOrder' }
+  return { ok: true, target: { s: startAnchor, e: endAnchor } }
 }
-
-/** The 1-based inclusive line range an edit target "touches", for the
- *  read-before-edit guard. Insert touches its neighboring existing lines (so
- *  appending requires the last line to have been read); an empty file touches
- *  nothing. */
-export function touchedRange(target: EditTarget, total: number): [number, number] {
-  if (target.kind === 'replace') return [target.s + 1, target.e]
-  const at = target.at
-  return [Math.max(1, at), Math.min(total, at + 1)]
-}
-
-/** Why an anchor failed to validate. */
-export type AnchorError =
-  | { reason: 'missing'; actual: string }
-  | { reason: 'mismatch'; actual: string; expected: string }
-  | { reason: 'outOfRange' }
 
 /**
- * Validate an `anchor` (the caller's copy of a line's text) against line
- * `line` (1-based) of `lines`. An empty `anchor` means "omitted": it is
- * required when the line exists and forbidden when it does not. Comparison is
- * `trim()`-based, so indentation/whitespace transcription slips are tolerated
- * while the actual content must still match.
+ * Apply a resolved target to `lines`, returning the new line array. The region
+ * `[s+1, e-1]` (1-based, inclusive) is replaced by `inserted` (empty = delete;
+ * an empty region + inserted = insert).
  */
-export function checkAnchor(
+export function applyEdit(
   lines: readonly string[],
-  line: number,
-  anchor: string,
-  total: number,
-): { ok: true } | ({ ok: false } & AnchorError) {
-  const exists = line >= 1 && line <= total
-  if (!exists) {
-    return anchor.trim() === ''
-      ? { ok: true }
-      : { ok: false, reason: 'outOfRange' }
-  }
-  const actual = lines[line - 1] ?? ''
-  if (anchor.trim() === '') return { ok: false, reason: 'missing', actual }
-  return actual.trim() === anchor.trim()
-    ? { ok: true }
-    : { ok: false, reason: 'mismatch', actual, expected: anchor }
+  target: EditTarget,
+  inserted: readonly string[],
+): string[] {
+  return [...lines.slice(0, target.s), ...inserted, ...lines.slice(target.e - 1)]
 }
