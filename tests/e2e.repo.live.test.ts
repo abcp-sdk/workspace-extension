@@ -132,6 +132,10 @@ maybe('live e2e: workspace repo-* tools against a real Forgejo', () => {
     const dir = `checkout-${Date.now()}`
     const checkout = await call('sandbox-checkout', { 'worker-name': worker, org: E2E_ORG, repo: E2E_REPO, dest: dir })
     expect(Number((checkout.data as Record<string, unknown>).files)).toBeGreaterThan(0)
+    expect(String((checkout.data as Record<string, unknown>).dest)).toBe(dir)
+    // The repo tree lands DIRECTLY under `dir` (the wrapper is stripped).
+    const ls = await call('sandbox-file-ls', { 'worker-name': worker, path: dir })
+    expect(ls.content).not.toContain(`${E2E_REPO}/`) // no nested wrapper dir
 
     await call('sandbox-file-write', { 'worker-name': worker, path: `${dir}/e2e-submit.txt`, content: 'hello\n' })
     const submitted = await call('sandbox-submit-mr', {

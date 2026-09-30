@@ -78,6 +78,13 @@ export interface SandboxSyncState {
   rev: string
   /** The session the sandbox is bound to (`org:repo:branch`). */
   session: string
+  /**
+   * The workspace directory the repo tree was checked out into (relative to the
+   * workspace root). Fan-out prefixes every repo-relative path with it, so a
+   * renamed/nested checkout stays coherent. Optional for old baselines (falls
+   * back to the repo name).
+   */
+  dest?: string
   /** Epoch millis of the last sync (diagnostics). */
   updatedAt: number
 }

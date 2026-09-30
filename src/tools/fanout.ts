@@ -46,16 +46,25 @@ export async function resolveTip(forgejo: Forgejo, org: string, repo: string, br
   return branches.find(b => b.name === branch)?.sha ?? ''
 }
 
-/** Materialize the repo tree at `ref` into the sandbox workspace (full checkout). */
+/** Join a workspace-relative `dest` with a repo-relative `path`. */
+export function destPath(dest: string, path: string): string {
+  const d = dest.replace(/\/+$/, '').replace(/^\.\/+/, '')
+  const p = path.replace(/^\/+/, '')
+  if (d === '' || d === '.') return p
+  return p === '' ? d : `${d}/${p}`
+}
+
+/** Materialize the repo tree at `ref` into `dest` in the sandbox (full checkout). */
 export async function checkoutIntoSandbox(
   forgejo: Forgejo,
   client: WorkerClient,
   org: string,
   repo: string,
   ref: string,
+  dest = repo,
 ): Promise<{ ref: string; files: number }> {
   const archive = await forgejo.archiveTarGz(org, repo, ref)
-  const res = await client.syncFolder({ tarball: archive, dest: '.', clean: true, rev: ref })
+  const res = await client.syncFolder({ tarball: archive, dest: dest === '' ? repo : dest, clean: true, rev: ref })
   return { ref, files: res.files }
 }
 
@@ -64,25 +73,31 @@ function shq(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
 }
 
-/** Apply one changed path into a sandbox. `status` is the compare status. */
+/**
+ * Apply one changed path into a sandbox. `dest` is the repo's checkout
+ * directory (relative to the workspace root); the repo-relative `path` is
+ * written under it, matching the full-checkout layout.
+ */
 async function applyPath(
   client: WorkerClient,
   forgejo: Forgejo,
   org: string,
   repo: string,
   rev: string,
+  dest: string,
   path: string,
   status: string,
   locale: string,
 ): Promise<void> {
+  const target = destPath(dest, path)
   if (status === 'removed' || status === 'deleted') {
-    // The worker has no delete RPC; remove through the shell (repo-relative
-    // path, validated, single-quoted).
-    await client.execute({ command: `rm -f -- ${shq(path)}`, workdir: '' }).catch(() => {})
+    // The worker has no delete RPC; remove through the shell (validated,
+    // single-quoted).
+    await client.execute({ command: `rm -f -- ${shq(target)}`, workdir: '' }).catch(() => {})
     return
   }
   const data = await forgejo.getRaw(org, repo, path, rev, locale)
-  await client.fileWrite({ path, content: data })
+  await client.fileWrite({ path: target, content: data })
 }
 
 /**
@@ -109,14 +124,15 @@ export async function fanoutRef(
     const base = await loadSync(ctx.tenant, name)
     if (base === null || base.rev === '') continue
     if (base.rev === head) continue
+    const dest = base.dest !== undefined && base.dest !== '' ? base.dest : repo
     try {
       const cmp = await ctx.forgejo.compare(org, repo, base.rev, head, ctx.locale)
       const client = await ctx.resolveWorker(name)
       for (const f of cmp.files) {
         if (f.path === '') continue
-        await applyPath(client, ctx.forgejo, org, repo, head, f.path, f.status, ctx.locale)
+        await applyPath(client, ctx.forgejo, org, repo, head, dest, f.path, f.status, ctx.locale)
       }
-      await saveSync(ctx.tenant, name, { rev: head, session: ctx.session, updatedAt: Date.now() })
+      await saveSync(ctx.tenant, name, { rev: head, session: ctx.session, dest, updatedAt: Date.now() })
       updated++
     } catch {
       // Sandbox unreachable or compare failed: leave its baseline untouched.
@@ -132,12 +148,13 @@ export async function recordBaseline(
   org: string,
   repo: string,
   branch: string,
+  dest = repo,
 ): Promise<void> {
   const saveSync = ctx.deps?.saveSyncState
   if (saveSync === undefined) return
   const rev = await resolveTip(ctx.forgejo, org, repo, branch, ctx.locale)
   if (rev === '') return
-  await saveSync(ctx.tenant, sandbox, { rev, session: ctx.session, updatedAt: Date.now() })
+  await saveSync(ctx.tenant, sandbox, { rev, session: ctx.session, dest, updatedAt: Date.now() })
 }
 
 /** Human summary of a fan-out for a tool result. */

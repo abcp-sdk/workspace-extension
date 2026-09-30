@@ -36,16 +36,17 @@ function refOf(args: Record<string, unknown>, locale: string): RepoRef {
  * `sandbox-checkout`: download the repo tree at `ref` as tar.gz and unpack it
  * into the sandbox workspace. `clean:false` keeps sandbox-only files and only
  * replaces files present in the archive (matching the worker's per-entry
- * overwrite). `dest` defaults to the workspace root. The archive carries the
- * repository's top-level directory, so omitting `dest` checks the repo out into
- * `<workspace>/<repo>/`.
+ * overwrite). The gateway STRIPS the archive's `<repo>/` wrapper, so `dest` is
+ * the exact directory the repo tree lands in: `dest=myapp` yields
+ * `<workspace>/myapp/README.md`. `dest` defaults to the repository name (so the
+ * default layout is `<workspace>/<repo>/`).
  */
 export async function sandboxCheckout(
   ctx: BridgeCtx,
   args: Record<string, unknown>,
 ): Promise<ToolResultData> {
   const r = refOf(args, ctx.locale)
-  const dest = strArg(args, 'dest')
+  const dest = strArg(args, 'dest') || r.repo
   const clean = args['clean'] === true
   // The archive endpoint needs a concrete ref; resolve an empty one to the
   // repository default branch.
@@ -53,15 +54,15 @@ export async function sandboxCheckout(
   const archive = await ctx.forgejo.archiveTarGz(r.org, r.repo, ref, ctx.locale)
   const res = await ctx.client.syncFolder({
     tarball: archive,
-    dest: dest === '' ? '.' : dest,
+    dest,
     clean,
     rev: ref,
   })
   return {
     content: tr(ctx.locale, 'checkoutDone', {
-      org: r.org, repo: r.repo, ref, files: res.files,
+      org: r.org, repo: r.repo, ref, dest, files: res.files,
     }),
-    data: { org: r.org, repo: r.repo, ref, dest: res.root, files: res.files },
+    data: { org: r.org, repo: r.repo, ref, dest, files: res.files },
   }
 }
 

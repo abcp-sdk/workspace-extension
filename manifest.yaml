@@ -642,9 +642,9 @@ tools:
             zh: Git 引用：分支、提交 sha 或标签。省略 = 仓库默认分支。
         dest:
           type: string
-          description: "Destination directory: relative to the workspace root, absolute, or starting with `~` (default: workspace root). A leading `~` or `~/...` expands to the worker's home dir (see sandbox-info)."
+          description: "The EXACT directory (relative to the workspace root, or starting with `~`) the repository tree is unpacked into; the repo's README ends up at `<dest>/README.md`. Defaults to the repository name, so the default layout is `<workspace>/<repo>/README.md`. Pass a different name to rename (e.g. `myapp`), or a nested path."
           descriptions:
-            zh: 目标目录：相对工作区根、绝对路径，或以 `~` 开头（默认：工作区根目录）。 以 `~` 或 `~/...` 开头会展开为 worker 主目录（见 sandbox-info）。
+            zh: 仓库树解包的【确切目录】（相对工作区根，或以 `~` 开头）；仓库的 README 会落在 `<dest>/README.md`。默认使用仓库名，即默认布局为 `<workspace>/<仓库名>/README.md`。传其他名字即可重命名（如 `myapp`），也可用嵌套路径。
         clean:
           type: boolean
           description: Empty the destination before unpacking (default false).

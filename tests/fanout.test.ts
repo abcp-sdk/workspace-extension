@@ -46,13 +46,14 @@ function fakeWorker() {
 }
 
 /** An in-memory sync-state store. */
-function fakeDeps(initial: Record<string, { rev: string; session: string; updatedAt: number }> = {}) {
-  const store: Record<string, { rev: string; session: string; updatedAt: number }> = { ...initial }
+type SyncState = { rev: string; session: string; dest?: string; updatedAt: number }
+function fakeDeps(initial: Record<string, SyncState> = {}) {
+  const store: Record<string, SyncState> = { ...initial }
   return {
     store,
     deps: {
       loadSyncState: async (_t: string, sb: string) => store[sb] ?? null,
-      saveSyncState: async (_t: string, sb: string, s: { rev: string; session: string; updatedAt: number }) => {
+      saveSyncState: async (_t: string, sb: string, s: SyncState) => {
         store[sb] = s
       },
     } as unknown as WorkspaceDeps,
@@ -74,13 +75,20 @@ describe('branchRefOf', () => {
 })
 
 describe('resolveTip / checkoutIntoSandbox', () => {
-  it('resolves a branch sha and checks out via the worker', async () => {
+  it('resolves a branch sha and checks out into the repo dir by default', async () => {
     const { forgejo } = fakeForgejo({}, { feat: 'abc123' })
     expect(await resolveTip(forgejo as never, 'o', 'r', 'feat', 'en')).toBe('abc123')
     const w = fakeWorker()
     const res = await checkoutIntoSandbox(forgejo as never, w.client, 'o', 'r', 'feat')
     expect(res).toEqual({ ref: 'feat', files: 3 })
-    expect(w.syncs[0]).toMatchObject({ dest: '.', clean: true, rev: 'feat' })
+    expect(w.syncs[0]).toMatchObject({ dest: 'r', clean: true, rev: 'feat' })
+  })
+
+  it('honors an explicit (renamed) dest', async () => {
+    const { forgejo } = fakeForgejo({}, { feat: 'abc123' })
+    const w = fakeWorker()
+    await checkoutIntoSandbox(forgejo as never, w.client, 'o', 'r', 'feat', 'myapp')
+    expect(w.syncs[0]).toMatchObject({ dest: 'myapp', clean: true })
   })
 })
 
@@ -103,8 +111,29 @@ describe('fanoutRef', () => {
     )
     expect(n).toBe(1)
     expect(compareCalls).toEqual([{ base: 'old', head: 'new' }])
-    expect(w.writes.map(x => x.path)).toEqual(['a.txt'])
+    // No dest in the baseline: falls back to the repo name (`r`).
+    expect(w.writes.map(x => x.path)).toEqual(['r/a.txt'])
     expect(store['w1']!.rev).toBe('new')
+    expect(store['w1']!.dest).toBe('r')
+  })
+
+  it('prefixes writes with the baseline checkout dest (renamed)', async () => {
+    const { forgejo } = fakeForgejo({ 'a.txt': new Uint8Array([104, 105]) })
+    const w = fakeWorker()
+    const { deps } = fakeDeps({ w1: { rev: 'old', session: 'o:r:feat', dest: 'myapp', updatedAt: 0 } })
+    await fanoutRef(
+      {
+        gateway: fakeGateway(['w1']) as never,
+        forgejo: forgejo as never,
+        resolveWorker: async () => w.client,
+        deps,
+        tenant: 't',
+        session: 'o:r:feat',
+        locale: 'en',
+      },
+      'o', 'r', 'feat', 'new',
+    )
+    expect(w.writes.map(x => x.path)).toEqual(['myapp/a.txt'])
   })
 
   it('skips a sandbox with no baseline (nothing checked out)', async () => {
@@ -142,7 +171,7 @@ describe('fanoutRef', () => {
       { gateway: fakeGateway(['w1']) as never, forgejo: forgejo as never, resolveWorker: async () => w.client, deps, tenant: 't', session: 'o:r:feat', locale: 'en' },
       'o', 'r', 'feat', 'new',
     )
-    expect(w.execs[0]).toContain("rm -f -- 'gone.txt'")
+    expect(w.execs[0]).toContain("rm -f -- 'r/gone.txt'")
     expect(w.writes).toHaveLength(0)
   })
 })

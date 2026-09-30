@@ -618,8 +618,8 @@ export const CATALOG = {
 
   // ---- checkout / submit ----
   checkoutDone: {
-    en: 'Checked out {org}/{repo}@{ref} into the sandbox ({files} files).',
-    zh: '已将 {org}/{repo}@{ref} 检出到沙箱（{files} 个文件）。',
+    en: 'Checked out {org}/{repo}@{ref} into the sandbox directory `{dest}` ({files} files).',
+    zh: '已将 {org}/{repo}@{ref} 检出到沙箱目录 `{dest}`（{files} 个文件）。',
   },
   submitDone: {
     en: 'Submitted {count} change(s) from the sandbox as change request #{index} into {base} of {org}/{repo} (head {head}).',

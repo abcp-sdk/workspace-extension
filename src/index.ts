@@ -335,12 +335,12 @@ export function createWorkspaceConfig(
         const ref = branchRefOf(s)
         if (ref === null) return ''
         const client = makeClient(await resolverFor(s, t, locale).resolve(sandbox))
-        const done = await checkoutIntoSandbox(repoClient(s, t, locale), client, ref.org, ref.repo, ref.branch)
+        const done = await checkoutIntoSandbox(repoClient(s, t, locale), client, ref.org, ref.repo, ref.branch, ref.repo)
         await recordBaseline(
           { forgejo: repoClient(s, t, locale), deps, tenant: t, session: s, locale },
-          sandbox, ref.org, ref.repo, ref.branch,
+          sandbox, ref.org, ref.repo, ref.branch, ref.repo,
         )
-        return tr(locale, 'checkoutDone', { org: ref.org, repo: ref.repo, ref: done.ref, files: done.files })
+        return tr(locale, 'checkoutDone', { org: ref.org, repo: ref.repo, ref: done.ref, dest: ref.repo, files: done.files })
       }
       return fn({ workspace: managerFor(s, t, locale), locale, session: s, resolveWorker, autoCheckout }, args ?? {})
     }
