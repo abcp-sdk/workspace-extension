@@ -215,38 +215,6 @@ export async function sandboxStatus(
   }
 }
 
-/** `sandbox-logs`: read a sandbox pod's container log (tail, optionally previous). */
-export async function sandboxLogs(
-  ctx: SandboxCtx,
-  args: Record<string, unknown>,
-): Promise<ToolResultData> {
-  const name = strArg(args, 'worker-name')
-  if (name === '') throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'worker-name' }))
-  const tail = Math.trunc(numArg(args, 'tail-lines') ?? 0)
-  const previous = args['previous'] === true
-  try {
-    const res = await ctx.workspace.sandboxLogs({ name, tailLines: BigInt(tail), previous })
-    const lines = res.lines
-    const diag = res.message
-      ? tr(ctx.locale, 'sandboxDiag', { restarts: res.restarts, message: res.message })
-      : ''
-    if (lines.length === 0) {
-      const head = tr(ctx.locale, 'sandboxLogsEmpty', { name })
-      return {
-        content: diag === '' ? head : `${head}\n${diag}`,
-        data: { name, lines: 0, available: false, phase: res.phase, restarts: res.restarts, message: res.message },
-      }
-    }
-    const header = tr(ctx.locale, 'sandboxLogsHeader', { name, count: lines.length })
-    return {
-      content: header + '\n' + lines.join('\n') + (diag === '' ? '' : `\n${diag}`),
-      data: { name, lines: lines.length, available: true, phase: res.phase, restarts: res.restarts, message: res.message },
-    }
-  } catch (e) {
-    throw new TypedToolError('internal', tr(ctx.locale, 'sandboxLogsFailed', { name, err: String(e) }))
-  }
-}
-
 /** `sandbox-delete`: delete a sandbox (pod + service + secret). */
 export async function sandboxDelete(
   ctx: SandboxCtx,

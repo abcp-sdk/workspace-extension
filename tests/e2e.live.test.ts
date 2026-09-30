@@ -86,8 +86,11 @@ maybe('live e2e: sandbox lifecycle + execution via the workspace gateway', () =>
       expect(exec.content).toContain('hi-e2e')
       expect(exec.data).toMatchObject({ state: 'done', exit_code: 0 })
 
-      // ---- write / read with line numbers ----
-      await call('sandbox-file-write', { 'worker-name': name, path: 'e2e/a.txt', content: 'x\ny\n' })
+      // ---- patch (add) / read with line numbers ----
+      await call('sandbox-file-patch', {
+        'worker-name': name,
+        'patch-text': '*** Begin Patch\n*** Add File: e2e/a.txt\n+x\n+y\n*** End Patch',
+      })
       const read = await call('sandbox-file-read', { 'worker-name': name, path: 'e2e/a.txt' })
       expect(read.content).toContain('1  x')
       expect(read.content).toContain('2  y')

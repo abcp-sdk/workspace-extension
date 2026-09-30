@@ -137,7 +137,10 @@ maybe('live e2e: workspace repo-* tools against a real Forgejo', () => {
     const ls = await call('sandbox-file-ls', { 'worker-name': worker, path: dir })
     expect(ls.content).not.toContain(`${E2E_REPO}/`) // no nested wrapper dir
 
-    await call('sandbox-file-write', { 'worker-name': worker, path: `${dir}/e2e-submit.txt`, content: 'hello\n' })
+    await call('sandbox-file-patch', {
+      'worker-name': worker,
+      'patch-text': `*** Begin Patch\n*** Add File: ${dir}/e2e-submit.txt\n+hello\n*** End Patch`,
+    })
     const submitted = await call('sandbox-submit-mr', {
       'worker-name': worker, org: E2E_ORG, repo: E2E_REPO, base: 'main', path: dir, title: 'e2e: submit',
     })

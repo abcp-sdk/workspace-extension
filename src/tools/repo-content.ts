@@ -6,16 +6,8 @@ import type { WorkspaceDeps } from '../deps.js'
 import { tr } from '../i18n.js'
 import { capLines, humanSize, MAX_RESULT_LINES, truncationNote } from './output.js'
 import { unifiedDiff } from './diff.js'
-import {
-  applyEdit,
-  checkAnchor,
-  joinFileLines,
-  numberLines,
-  resolveEditTarget,
-  toFileLines,
-  windowLines,
-} from './text.js'
-import { anchorArg, anchorError, hasArg, numArg, rangeError, requireArg, strArg } from './shared.js'
+import { numberLines, windowLines } from './text.js'
+import { numArg, requireArg, strArg } from './shared.js'
 
 /** Everything a repo-* tool handler needs at call time. */
 export interface RepoCtx {

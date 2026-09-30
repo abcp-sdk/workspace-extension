@@ -25,14 +25,12 @@ import { localeOf, tr } from './i18n.js'
 import { materializeLifecycle, parseSessionName } from './tools/lifecycle.js'
 import { domainOf, expandPathArgs, strArg } from './tools/shared.js'
 import {
-  deleteFile,
   downloadFile,
-  editFile,
   type FileCtx,
   listFiles,
+  patchFile,
   readFile,
   uploadFile,
-  writeFile,
 } from './tools/files.js'
 import {
   execCommand,
@@ -86,17 +84,15 @@ import {
   sandboxDelete,
   listOCIImages,
   sandboxList,
-  sandboxLogs,
   sandboxStatus,
   type SandboxCtx,
 } from './tools/sandbox.js'
-import { ociImport, repoBuildImage, repoBuildPreview, type BuildCtx } from './tools/imagebuild.js'
+import { ociImport, repoBuildImage, type BuildCtx } from './tools/imagebuild.js'
 import {
   serviceDelete,
   serviceDeploy,
   serviceList,
   serviceLogs,
-  servicePreview,
   servicePromote,
   serviceRollback,
   type ServiceCtx,
@@ -452,7 +448,6 @@ export function createWorkspaceConfig(
     'sandbox-list': sandboxWrap(sandboxList),
     'list-oci-images': sandboxWrap(listOCIImages),
     'sandbox-status': sandboxWrap(sandboxStatus),
-    'sandbox-logs': sandboxWrap(sandboxLogs),
     'sandbox-delete': sandboxWrap(sandboxDelete),
 
     // ---- sandbox execution (easyworker) ----
@@ -468,10 +463,8 @@ export function createWorkspaceConfig(
     'sandbox-job-stdin': jobWrap(jobStdin),
     'sandbox-job-list': jobWrap(jobList),
     'sandbox-file-read': fileWrap(readFile),
-    'sandbox-file-write': fileWrap(writeFile),
-    'sandbox-file-edit': fileWrap(editFile),
+    'sandbox-file-patch': fileWrap(patchFile),
     'sandbox-file-ls': fileWrap(listFiles),
-    'sandbox-file-rm': fileWrap(deleteFile),
     'sandbox-file-download': fileWrap(downloadFile),
     'sandbox-file-upload': fileWrap(uploadFile),
     'sandbox-checkout': bridgeWrap(sandboxCheckout),
@@ -487,7 +480,6 @@ export function createWorkspaceConfig(
     'repo-list-push-mirrors': repoWrap(repoListPushMirrors),
     'repo-delete-push-mirror': repoWrap(repoDeletePushMirror),
     'repo-build-image': buildWrap(repoBuildImage),
-    'repo-build-preview': buildWrap(repoBuildPreview),
     'oci-import': buildWrap(ociImport),
     'repo-mail-send': mailWrap(repoMailSend),
 
@@ -495,7 +487,6 @@ export function createWorkspaceConfig(
     'service-deploy': serviceWrap(serviceDeploy),
     'service-promote': serviceWrap(servicePromote),
     'service-rollback': serviceWrap(serviceRollback),
-    'service-preview': serviceWrap(servicePreview),
     'service-list': serviceWrap(serviceList),
     'service-delete': serviceWrap(serviceDelete),
     'service-logs': serviceWrap(serviceLogs),

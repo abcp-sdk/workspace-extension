@@ -1,35 +1,30 @@
 import { type ToolResultData, TypedToolError } from '@abc-protocol/sdk'
-import type { WorkerClient } from '../client.js'
+import { type WorkerClient, workerAnchors } from '../client.js'
 import type { WorkspaceDeps } from '../deps.js'
 import {
   capLines,
   humanSize,
-  MAX_RESULT_BYTES,
   MAX_RESULT_LINES,
   truncationNote,
 } from './output.js'
+import { baseName, numArg, requireArg, strArg } from './shared.js'
 import {
-  anchorArg,
-  anchorError,
-  baseName,
-  hasArg,
-  numArg,
-  rangeError,
-  requireArg,
-  strArg,
-} from './shared.js'
-import {
-  applyEdit,
-  checkAnchor,
+  expandTilde,
   joinFileLines,
   looksTextual,
   normalizeRel,
   numberLines,
-  resolveEditTarget,
   splitLines,
   toFileLines,
 } from './text.js'
 import { unifiedDiff } from './diff.js'
+import {
+  addContentsLines,
+  applyChunks,
+  PatchError,
+  parsePatch,
+  type PatchHunk,
+} from './patch.js'
 import { tr } from '../i18n.js'
 
 /** Everything a file-tool handler needs at call time. */
@@ -101,180 +96,141 @@ export async function readFile(
 }
 
 /**
- * `write`: overwrite a text file with `content` (JSON-friendly full content),
- * then read it back and return the WHOLE file with line numbers. Unlike `read`
- * there is no 1000-line cap (the caller already supplied the full content);
- * only the 120 KiB protocol guard applies — a larger write is REJECTED before
- * anything is written. On success the whole file counts as "seen" for `edit`.
+ * `patch`: apply an opencode-style multi-file patch (add / update / delete) in
+ * ONE call. The patch is fully parsed and every file's new content is computed
+ * BEFORE anything is written, so a malformed or non-matching patch leaves the
+ * workspace untouched. `*** Move to:` is REJECTED (not supported). File EOL and
+ * a UTF-8 BOM are preserved. Paths inside the patch are `~`-expanded here (the
+ * worker does not expand `~`). Returns a one-line summary per file plus a
+ * unified diff of the whole change.
  */
-export async function writeFile(
+export async function patchFile(
   ctx: FileCtx,
   args: Record<string, unknown>,
 ): Promise<ToolResultData> {
-  const path = requireArg(args, 'path', ctx.locale)
   const locale = ctx.locale ?? 'en'
-  const content = strArg(args, 'content')
-  const bytes = Buffer.byteLength(content, 'utf8')
-  const data = new TextEncoder().encode(content)
-
-  if (bytes > MAX_RESULT_BYTES) {
-    throw new TypedToolError(
-      'invalid_argument',
-      tr(locale, 'writeTooLarge', {
-        path,
-        bytes,
-        limit: humanSize(MAX_RESULT_BYTES),
-      }),
-    )
+  const raw = strArg(args, 'patch-text')
+  if (raw.trim() === '') {
+    throw new TypedToolError('invalid_argument', tr(locale, 'argRequired', { key: 'patch-text' }))
   }
 
-  // Best-effort pre-image so the tool card can render a unified diff.
-  let before = ''
+  let hunks: PatchHunk[]
   try {
-    const cur = await ctx.client.fileRead({ path })
-    before = new TextDecoder('utf-8').decode(cur.content)
-  } catch {
-    // new file -> diff against empty
+    hunks = parsePatch(raw)
+  } catch (e) {
+    throw new TypedToolError('invalid_argument', tr(locale, 'patchInvalid', { err: String(e) }))
+  }
+  if (hunks.length === 0) {
+    throw new TypedToolError('invalid_argument', tr(locale, 'patchEmpty'))
+  }
+  for (const h of hunks) {
+    if (h.type === 'update' && h.movePath !== undefined) {
+      throw new TypedToolError('invalid_argument', tr(locale, 'patchMoveUnsupported', { path: h.path }))
+    }
   }
 
-  const wrote = await ctx.client.fileWrite({ path, content: data })
-  if (!wrote.ok) {
-    throw new TypedToolError('internal', tr(locale, 'writeFailed', { path }))
+  const anchors = await workerAnchors(ctx.client)
+  const expand = (p: string): string => expandTilde(p, anchors)
+
+  // Phase 1: compute every file's new content (no writes yet). A failure here
+  // aborts the whole patch, so the workspace is never partially applied.
+  interface Planned {
+    path: string
+    kind: 'add' | 'update' | 'delete'
+    before: string
+    after: string
+    lines: number
+  }
+  const planned: Planned[] = []
+  const summaries: string[] = []
+  let totalAdded = 0
+  let totalRemoved = 0
+  let fullDiff = ''
+  for (const h of hunks) {
+    const path = expand(h.path)
+    if (h.type === 'add') {
+      const after = addContentsLines(h.contents).join('\n')
+      const afterText = after === '' ? '' : after + '\n'
+      const diff = unifiedDiff('', afterText, path)
+      planned.push({ path, kind: 'add', before: '', after: afterText, lines: addContentsLines(h.contents).length })
+      summaries.push(tr(locale, 'patchAdded', { path, lines: addContentsLines(h.contents).length }))
+      totalAdded += diff.added
+      if (diff.text !== '') fullDiff += (fullDiff === '' ? '' : '\n') + diff.text
+      continue
+    }
+    if (h.type === 'delete') {
+      const before = await readTextFile(ctx, path, locale)
+      const diff = unifiedDiff(before, '', path)
+      planned.push({ path, kind: 'delete', before, after: '', lines: 0 })
+      summaries.push(tr(locale, 'patchDeleted', { path }))
+      totalRemoved += diff.removed
+      if (diff.text !== '') fullDiff += (fullDiff === '' ? '' : '\n') + diff.text
+      continue
+    }
+    // update
+    const before = await readTextFile(ctx, path, locale)
+    const file = toFileLines(before)
+    let nextLines: string[]
+    try {
+      nextLines = applyChunks(path, file.lines, h.chunks)
+    } catch (e) {
+      throw new TypedToolError('retryable', tr(locale, 'patchApplyFailed', { path, err: String(e) }))
+    }
+    const after = joinFileLines({ ...file, lines: nextLines })
+    const diff = unifiedDiff(before, after, path)
+    planned.push({ path, kind: 'update', before, after, lines: nextLines.length })
+    summaries.push(tr(locale, 'patchUpdated', { path, added: diff.added, removed: diff.removed }))
+    totalAdded += diff.added
+    totalRemoved += diff.removed
+    if (diff.text !== '') fullDiff += (fullDiff === '' ? '' : '\n') + diff.text
   }
 
-  // Read back (authoritative bytes) and render the whole file with line numbers.
-  const read = await ctx.client.fileRead({ path })
-  const file = toFileLines(new TextDecoder('utf-8', { ignoreBOM: true }).decode(read.content))
-  const numbered = numberLines(file.lines, 1)
-  // Byte-only guard (never a line cap for write).
-  const capped = capLines(numbered, Number.MAX_SAFE_INTEGER, MAX_RESULT_BYTES)
+  // Phase 2: apply. Adds/updates write; deletes remove.
+  for (const p of planned) {
+    if (p.kind === 'delete') {
+      const res = await ctx.client.fileDelete({ path: p.path })
+      if (!res.ok) {
+        throw new TypedToolError('internal', tr(locale, 'deleteFailed', { path: p.path }))
+      }
+      continue
+    }
+    const bytes = new TextEncoder().encode(p.after)
+    const wrote = await ctx.client.fileWrite({ path: p.path, content: bytes })
+    if (!wrote.ok) {
+      throw new TypedToolError('internal', tr(locale, 'writeFailed', { path: p.path }))
+    }
+  }
+
+  const summary = tr(locale, 'patchSummary', {
+    files: planned.length,
+    added: totalAdded,
+    removed: totalRemoved,
+  })
+  const capped = capLines(fullDiff.split('\n'))
   let body = capped.kept.join('\n')
   if (capped.truncated) {
-    body += truncationNote(capped, capped.kept.length, numbered.length, locale)
+    body += truncationNote(capped, capped.kept.length, fullDiff.split('\n').length, locale)
   }
-
-  const summary = tr(locale, 'wroteFile', {
-    bytes: read.content.length,
-    path,
-    lines: file.lines.length,
-  })
-  const diff = unifiedDiff(before, content, path)
   return {
-    content: body === '' ? summary : `${summary}\n\n${body}`,
+    content: `${summary}\n${summaries.join('\n')}` + (body === '' ? '' : `\n\n${body}`),
     data: {
-      path,
-      bytes: read.content.length,
-      lines: file.lines.length,
-      total_lines: file.lines.length,
-      added: diff.added,
-      removed: diff.removed,
-      diff: diff.text,
+      files: planned.length,
+      added: totalAdded,
+      removed: totalRemoved,
+      diff: fullDiff,
+      paths: planned.map(p => p.path),
+      changed: planned.map(p => ({ path: p.path, kind: p.kind, lines: p.lines })),
     },
   }
 }
 
-/**
- * `edit`: line-oriented replace/insert over the SAME line model as `read`
- * (1-based). The edit region is defined by TWO ANCHORS that are the UNCHANGED
- * lines immediately OUTSIDE it:
- *   - `start-anchor-line`: the 1-based line number of the unchanged line ABOVE
- *     the region (`0` = the head of the file).
- *   - `end-anchor-line`: the unchanged line BELOW the region (`total + 1` = the
- *     tail of the file).
- * The lines STRICTLY BETWEEN them are replaced by `content`; an empty region
- * inserts, empty `content` deletes. Anchors are NEVER silently clamped:
- * `start-anchor-line` must be in `[0, total]`, `end-anchor-line` in
- * `[1, total + 1]`, and `end-anchor-line >= start-anchor-line + 1`.
- *
- * Returns a localized one-line summary, a blank line, then a unified diff.
- */
-export async function editFile(
-  ctx: FileCtx,
-  args: Record<string, unknown>,
-): Promise<ToolResultData> {
-  const path = requireArg(args, 'path', ctx.locale)
-  const locale = ctx.locale ?? 'en'
-  const content = strArg(args, 'content')
-  const startAnchorText = strArg(args, 'start-anchor')
-  const endAnchorText = strArg(args, 'end-anchor')
-
-  // All four anchor arguments are REQUIRED (present, though the content may be
-  // "" at the head/tail). A missing key is a caller error.
-  for (const key of [
-    'start-anchor-line',
-    'end-anchor-line',
-    'start-anchor',
-    'end-anchor',
-  ]) {
-    if (!hasArg(args, key)) {
-      throw new TypedToolError('invalid_argument', tr(locale, 'editAnchorRequired', { key }))
-    }
+/** Read a file's full text (BOM/EOL preserved) for patch planning. */
+async function readTextFile(ctx: FileCtx, path: string, locale: string): Promise<string> {
+  const res = await ctx.client.fileRead({ path }).catch(() => null)
+  if (res === null) {
+    throw new TypedToolError('not_found', tr(locale, 'patchFileMissing', { path }))
   }
-
-  const read = await ctx.client.fileRead({ path })
-  const current = new TextDecoder('utf-8', { fatal: false, ignoreBOM: true }).decode(read.content)
-  const file = toFileLines(current)
-  const total = file.lines.length
-  const inserted = content === '' ? [] : toFileLines(content).lines
-
-  // `start-anchor-line` / `end-anchor-line` are required. An EMPTY STRING is the
-  // sentinel for the head (start => 0) and the tail (end => total + 1).
-  const startAnchor = anchorArg(args, 'start-anchor-line', 0)
-  const endAnchor = anchorArg(args, 'end-anchor-line', total + 1)
-
-  // Strict bounds (no silent clamping).
-  const resolved = resolveEditTarget(startAnchor, endAnchor, total)
-  if (!resolved.ok) {
-    throw rangeError(locale, path, total, resolved.reason, startAnchor, endAnchor)
-  }
-
-  // Anchor-content validation: the UNCHANGED line above (start-anchor-line) and
-  // below (end-anchor-line) the region must match the caller's copy.
-  const startCheck = checkAnchor(file.lines, startAnchor, startAnchorText, total)
-  if (!startCheck.ok) {
-    throw anchorError(locale, path, 'start', startAnchor, total, startCheck)
-  }
-  const endCheck = checkAnchor(file.lines, endAnchor, endAnchorText, total)
-  if (!endCheck.ok) {
-    throw anchorError(locale, path, 'end', endAnchor, total, endCheck)
-  }
-
-  const next = applyEdit(file.lines, resolved.target, inserted)
-
-  const out = joinFileLines({ ...file, lines: next })
-  if (out === current) {
-    return { content: tr(locale, 'editNoChanges', { path }) }
-  }
-
-  const data = new TextEncoder().encode(out)
-  const wrote = await ctx.client.fileWrite({ path, content: data })
-  if (!wrote.ok) {
-    throw new TypedToolError('internal', tr(locale, 'writeFailed', { path }))
-  }
-
-  const diff = unifiedDiff(current, out, path)
-  const summary = tr(locale, 'editSummary', {
-    path,
-    added: diff.added,
-    removed: diff.removed,
-    lines: next.length,
-  })
-  const capped = capLines(diff.text.split('\n'))
-  let body = capped.kept.join('\n')
-  if (capped.truncated) {
-    body += truncationNote(capped, capped.kept.length, diff.text.split('\n').length, locale)
-  }
-  return {
-    content: `${summary}\n\n${body}`,
-    data: {
-      path,
-      added: diff.added,
-      removed: diff.removed,
-      diff: diff.text,
-      lines: next.length,
-      bytes: data.length,
-    },
-  }
+  return new TextDecoder('utf-8', { ignoreBOM: true }).decode(res.content)
 }
 
 /** `list`: tree (levels 1..depth), size + is_dir per entry. ONE server-side
@@ -347,20 +303,6 @@ export async function listFiles(
     content,
     data: { rows: entries.length, truncated, entries },
   }
-}
-
-/** `rm`: remove a file or directory tree (worker.v1 FileDelete). */
-export async function deleteFile(
-  ctx: FileCtx,
-  args: Record<string, unknown>,
-): Promise<ToolResultData> {
-  const path = requireArg(args, 'path', ctx.locale)
-  const locale = ctx.locale ?? 'en'
-  const res = await ctx.client.fileDelete({ path })
-  if (!res.ok) {
-    throw new TypedToolError('internal', tr(locale, 'deleteFailed', { path }))
-  }
-  return { content: tr(locale, 'deletedPath', { path }), data: { path, deleted: true } }
 }
 
 /** `download`: agent file → workspace path. */

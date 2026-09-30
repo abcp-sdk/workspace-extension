@@ -85,25 +85,45 @@ export const CATALOG = {
     en: "'{path}' is not a text file (binary content); read supports text files only",
     zh: "'{path}' 不是文本文件（二进制内容）；read 只支持文本文件。",
   },
-  wroteFile: {
-    en: "Wrote {bytes} bytes to '{path}' ({lines} lines).",
-    zh: "已向 '{path}' 写入 {bytes} 字节（{lines} 行）。",
-  },
-  writeTooLarge: {
-    en: "'{path}' is {bytes} bytes; write is limited to {limit} (build larger files in the workspace instead).",
-    zh: "'{path}' 为 {bytes} 字节；write 上限为 {limit}（更大的文件请在 workspace 内生成）。",
-  },
   writeFailed: {
     en: "failed to write '{path}'.",
     zh: "写入 '{path}' 失败。",
   },
-  editSummary: {
-    en: "Edited '{path}': +{added} -{removed} (now {lines} lines).",
-    zh: "已编辑 '{path}'：+{added} -{removed}（现为 {lines} 行）。",
+  patchInvalid: {
+    en: 'invalid patch: {err}',
+    zh: '补丁无效：{err}',
   },
-  editNoChanges: {
-    en: "No changes to '{path}'.",
-    zh: "'{path}' 没有变化。",
+  patchEmpty: {
+    en: 'patch rejected: no file operations (an empty "*** Begin Patch / *** End Patch" is not a change).',
+    zh: '补丁被拒绝：没有任何文件操作（空的 "*** Begin Patch / *** End Patch" 不算改动）。',
+  },
+  patchMoveUnsupported: {
+    en: "patch move is not supported ('*** Move to:' on '{path}'); add the new file and delete the old one instead.",
+    zh: "不支持补丁移动（'{path}' 上的 '*** Move to:'）；请改为新增目标文件并删除旧文件。",
+  },
+  patchApplyFailed: {
+    en: "patch failed to apply to '{path}': {err}",
+    zh: "补丁应用到 '{path}' 失败：{err}",
+  },
+  patchFileMissing: {
+    en: "patch references '{path}', which does not exist (use '*** Add File:' to create it).",
+    zh: "补丁引用了不存在的 '{path}'（若要新建请用 '*** Add File:'）。",
+  },
+  patchAdded: {
+    en: "A {path} ({lines} lines)",
+    zh: "A {path}（{lines} 行）",
+  },
+  patchUpdated: {
+    en: "M {path} (+{added} -{removed})",
+    zh: "M {path}（+{added} -{removed}）",
+  },
+  patchDeleted: {
+    en: 'D {path}',
+    zh: 'D {path}',
+  },
+  patchSummary: {
+    en: 'Applied patch to {files} file(s): +{added} -{removed}.',
+    zh: '已对 {files} 个文件应用补丁：+{added} -{removed}。',
   },
   emptyRoot: {
     en: '(workspace root is empty)',
@@ -146,10 +166,6 @@ export const CATALOG = {
   omittedEntries: {
     en: '... {path}: {count} entries omitted (limit {limit})',
     zh: '... {path}：省略 {count} 个条目（上限 {limit}）',
-  },
-  deletedPath: {
-    en: "Deleted '{path}'.",
-    zh: "已删除 '{path}'。",
   },
   deleteFailed: {
     en: "Failed to delete '{path}'.",
@@ -277,10 +293,6 @@ export const CATALOG = {
     en: "service '{name}' not found.",
     zh: "未找到服务 '{name}'。",
   },
-  servicePreviewed: {
-    en: "Preview service '{name}' ({image}) is up in-cluster at {url} (no public URL; reclaimed on session end / TTL).",
-    zh: "预览服务 '{name}'（{image}）已在集群内就绪：{url}（无公开地址；会话结束 / TTL 后回收）。",
-  },
   serviceLogsHeader: {
     en: "Logs for '{name}' (last {count} lines):",
     zh: "'{name}' 的日志（最后 {count} 行）：",
@@ -325,10 +337,6 @@ export const CATALOG = {
     en: "service-logs failed for '{name}': {err}",
     zh: "读取 '{name}' 日志失败：{err}",
   },
-  previewImageBuilt: {
-    en: "Built and pushed PREVIEW image '{image}'.",
-    zh: "已构建并推送预览镜像 '{image}'。",
-  },
   ociImageNone: {
     en: 'No OCI images found.',
     zh: '未找到 OCI 镜像。',
@@ -369,18 +377,6 @@ export const CATALOG = {
     en: 'sandbox exited/failed: restarts={restarts}, reason: {message}',
     zh: '沙箱已退出/失败：重启 {restarts} 次，原因：{message}',
   },
-  sandboxLogsHeader: {
-    en: "Logs for sandbox '{name}' (last {count} lines):",
-    zh: "沙箱 '{name}' 的日志（最后 {count} 行）：",
-  },
-  sandboxLogsEmpty: {
-    en: "No log output for sandbox '{name}'.",
-    zh: "沙箱 '{name}' 暂无日志输出。",
-  },
-  sandboxLogsFailed: {
-    en: "sandbox-logs failed for '{name}': {err}",
-    zh: "读取沙箱 '{name}' 日志失败：{err}",
-  },
   workerNameRequired: {
     en: "worker-name is required (call sandbox-create or sandbox-list first)",
     zh: '缺少 worker-name（请先调用 sandbox-create 或 sandbox-list）。',
@@ -402,34 +398,6 @@ export const CATALOG = {
   argRequired: {
     en: '{key} is required',
     zh: '缺少 {key}。',
-  },
-  editStartAnchorRange: {
-    en: 'start-anchor-line {start} is out of range: it must be between 0 and the number of lines ({total}); use 0 to insert at the head.',
-    zh: 'start-anchor-line {start} 越界：必须在 0 到总行数（{total}）之间；在文件头插入请用 0。',
-  },
-  editEndAnchorRange: {
-    en: 'end-anchor-line {end} is out of range: it must be between 1 and the number of lines + 1 ({total} + 1); use total + 1 to append at the tail.',
-    zh: 'end-anchor-line {end} 越界：必须在 1 到总行数 + 1（{total} + 1）之间；在文件尾追加请用总行数 + 1。',
-  },
-  editAnchorOrder: {
-    en: 'end-anchor-line ({end}) must be greater than start-anchor-line ({start}); the two anchor the unchanged lines just outside the edit region.',
-    zh: 'end-anchor-line（{end}）必须大于 start-anchor-line（{start}）；两者锚定编辑区两侧的不变行。',
-  },
-  editAnchorEmpty: {
-    en: "the anchor line {kind} the edit region (line {line} of '{path}') is not blank, but '{kind}-anchor' was empty; pass that line's current text. That line is: {actual}",
-    zh: "编辑区{kindSide}的锚行（'{path}' 第 {line} 行）不是空行，但 '{kind}-anchor' 传了空字符串；请传该行当前原文。该行内容：{actual}",
-  },
-  editAnchorMismatch: {
-    en: "'{kind}-anchor' (line {line} of '{path}', the unchanged line {kindSide} the edit region) does not match: expected {expected}, found {actual}. The file or line numbers changed; call read again.",
-    zh: "'{kind}-anchor'（'{path}' 第 {line} 行，即编辑区{kindSide}的不变行）不匹配：期望 {expected}，实际 {actual}。文件或行号已变化；请重新 read。",
-  },
-  editAnchorOutOfRange: {
-    en: "'{kind}-anchor' was given for line {line}, which does not exist in '{path}' ({total} lines); pass an empty string instead.",
-    zh: "'{path}'（{total} 行）中不存在第 {line} 行，'{kind}-anchor' 应传空字符串。",
-  },
-  editAnchorRequired: {
-    en: "'{key}' is a required argument; pass the current text of the line it anchors, or an empty string when that line does not exist.",
-    zh: "'{key}' 是必填参数；请传其锚定行的当前原文，该行不存在时传空字符串。",
   },
   mailBranchMissing: {
     en: "branch '{branch}' does not exist in the repository (branch <-> session is 1:1)",

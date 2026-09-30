@@ -22,7 +22,6 @@ function fakeGateway(overrides: Partial<Record<string, unknown>> = {}) {
     contents: { isDir: false, text: 'hello\n', sha: 'deadbeef', size: 6n, entries: [] },
     readRaw: { data: new Uint8Array([1, 2, 3]) },
     submitMR: { index: 7, url: 'http://x/mr/7', head: 'mr/o-r-main-1' },
-    branchStatus: { placeholder: true, staged: false, tip: 't', mergeTip: 'p' },
     tree: { entries: [{ path: 'a.txt', type: 'file', size: 3n }, { path: 'dir', type: 'dir', size: 0n }], truncated: false },
     log: { commits: [{ sha: 'c1', message: 'hi', author: 'A', date: '2026-01-01' }] },
     getCommit: { commit: { sha: 'c1', message: 'm', author: 'A', date: 'd', parents: ['p'] } },

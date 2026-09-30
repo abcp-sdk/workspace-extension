@@ -1,23 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import { TypedToolError } from '@abc-protocol/sdk'
 import {
-  applyEdit,
   expandTilde,
   looksTextual,
   numberLines,
-  resolveEditTarget,
   splitLines,
   windowLines,
 } from '../src/tools/text.js'
 import {
-  deleteFile,
   downloadFile,
-  editFile,
+  patchFile,
   readFile,
   uploadFile,
-  writeFile,
   type FileCtx,
 } from '../src/tools/files.js'
+import { applyChunks, findContext, parsePatch } from '../src/tools/patch.js'
 import type { WorkerClient } from '../src/client.js'
 import type { WorkspaceDeps } from '../src/deps.js'
 
@@ -55,6 +52,9 @@ function fakeClient(files: Record<string, Uint8Array>): WorkerClient {
       delete files[req.path]
       return { ok: true }
     },
+    // `workerAnchors` calls info() to expand a leading `~`; provide a stub so
+    // paths without `~` are returned unchanged.
+    info: async () => ({ home: '/root', workspace: '/root/workspace' }),
   } as unknown as WorkerClient
 }
 
@@ -114,24 +114,6 @@ describe('text helpers', () => {
     // both empty -> unchanged (cannot expand)
     expect(expandTilde('~/x', { home: '', workspace: '' })).toBe('~/x')
   })
-
-  it('resolves anchor pairs strictly (no clamping)', () => {
-    expect(resolveEditTarget(1, 4, 10)).toEqual({ ok: true, target: { s: 1, e: 4 } })
-    expect(resolveEditTarget(0, 1, 10)).toEqual({ ok: true, target: { s: 0, e: 1 } })
-    expect(resolveEditTarget(10, 11, 10)).toEqual({ ok: true, target: { s: 10, e: 11 } })
-    expect(resolveEditTarget(0, 1, 0)).toEqual({ ok: true, target: { s: 0, e: 1 } })
-    expect(resolveEditTarget(11, 11, 10)).toEqual({ ok: false, reason: 'startAnchorMin' })
-    expect(resolveEditTarget(2, 2, 10)).toEqual({ ok: false, reason: 'anchorOrder' })
-    expect(resolveEditTarget(3, 12, 10)).toEqual({ ok: false, reason: 'endAnchorMax' })
-    expect(resolveEditTarget(-1, 1, 10)).toEqual({ ok: false, reason: 'startAnchorMin' })
-  })
-
-  it('applies an edit target', () => {
-    expect(applyEdit(['1', '2', '3', '4'], { s: 1, e: 4 }, ['X'])).toEqual(['1', 'X', '4'])
-    expect(applyEdit(['1', '2', '3'], { s: 1, e: 2 }, ['X'])).toEqual(['1', 'X', '2', '3'])
-    expect(applyEdit(['1', '2'], { s: 0, e: 1 }, ['H'])).toEqual(['H', '1', '2'])
-    expect(applyEdit(['1', '2'], { s: 2, e: 3 }, ['T'])).toEqual(['1', '2', 'T'])
-  })
 })
 
 describe('read', () => {
@@ -158,177 +140,146 @@ describe('read', () => {
   })
 })
 
-describe('write', () => {
-  it('writes bytes and returns the numbered full file', async () => {
-    const files: Record<string, Uint8Array> = {}
-    const r = await writeFile(fileCtx(files), { path: 'out.txt', content: 'a\nb\n' })
-    expect(new TextDecoder().decode(files['out.txt'])).toBe('a\nb\n')
-    expect(r.content).toContain('Wrote 4 bytes')
-    expect(r.content).toContain('1  a')
-    expect(r.content).toContain('2  b')
-    expect(r.data).toMatchObject({ lines: 2, total_lines: 2 })
+describe('patch (parse + apply)', () => {
+  it('parses add/update/delete sections', () => {
+    const hunks = parsePatch(`*** Begin Patch
+*** Add File: a.txt
++hello
++world
+*** Update File: b.txt
+@@
+-old
++new
+*** Delete File: c.txt
+*** End Patch`)
+    expect(hunks).toHaveLength(3)
+    expect(hunks[0]).toMatchObject({ type: 'add', path: 'a.txt', contents: 'hello\nworld\n' })
+    expect(hunks[1]).toMatchObject({ type: 'update', path: 'b.txt' })
+    expect(hunks[2]).toMatchObject({ type: 'delete', path: 'c.txt' })
   })
 
-  it('does not cap at 1000 lines (whole file returned)', async () => {
-    const files: Record<string, Uint8Array> = {}
-    const body = Array.from({ length: 1200 }, (_, i) => `L${i + 1}`).join('\n') + '\n'
-    const r = await writeFile(fileCtx(files), { path: 'big.txt', content: body })
-    expect(r.content).toContain('1200  L1200')
-    expect(r.content).not.toContain('truncated')
+  it('rejects a patch without Begin/End markers', () => {
+    expect(() => parsePatch('*** Update File: a\n@@\n-a\n+b')).toThrow(/Begin/)
   })
 
-  it('rejects content over 120 KiB without writing', async () => {
-    const files: Record<string, Uint8Array> = {}
-    const huge = 'x'.repeat(121 * 1024)
-    const err = await writeFile(fileCtx(files), { path: 'huge.txt', content: huge }).catch(e => e)
-    expect(err).toBeInstanceOf(TypedToolError)
-    expect((err as TypedToolError).code).toBe('invalid_argument')
-    expect(files['huge.txt']).toBeUndefined()
+  it('rejects an update with no hunks', () => {
+    expect(() => parsePatch('*** Begin Patch\n*** Update File: a.txt\n*** End Patch')).toThrow(/at least one/)
+  })
+
+  it('finds context with the trim fallback', () => {
+    expect(findContext(['alpha', 'beta', 'gamma'], ['beta'], 0)).toBe(1)
+    expect(findContext(['  alpha  ', 'beta'], ['alpha'], 0)).toBe(0)
+    expect(findContext(['x'], ['nope'], 0)).toBe(-1)
+  })
+
+  it('applies chunks in order', () => {
+    const out = applyChunks('a.txt', ['1', '2', '3', '4'], [
+      { oldLines: ['2', '3'], newLines: ['X'] },
+    ])
+    expect(out).toEqual(['1', 'X', '4'])
+  })
+
+  it('throws when old lines do not match', () => {
+    expect(() => applyChunks('a.txt', ['1', '2'], [{ oldLines: ['NOPE'], newLines: ['X'] }])).toThrow(/Failed to find/)
   })
 })
 
-describe('edit (anchor lines + anchor content)', () => {
-  const decode = (f: Record<string, Uint8Array>) =>
-    new TextDecoder('utf-8', { ignoreBOM: true }).decode(f['a.txt'])
+describe('patch tool', () => {
+  const decode = (f: Record<string, Uint8Array>, p = 'a.txt') =>
+    new TextDecoder('utf-8', { ignoreBOM: true }).decode(f[p])
 
-  it('replaces the lines strictly between the two anchors', async () => {
-    const files = { 'a.txt': enc('1\n2\n3\n4') }
-    await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 4, 'start-anchor': '1', 'end-anchor': '4', content: 'X' })
-    expect(decode(files)).toBe('1\nX\n4')
-  })
-
-  it('inserts between two adjacent anchors', async () => {
-    const files = { 'a.txt': enc('1\n2\n3') }
-    await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 2, 'start-anchor': '1', 'end-anchor': '2', content: 'X' })
-    expect(decode(files)).toBe('1\nX\n2\n3')
-  })
-
-  it('prepends at the head (start 0, empty start-anchor)', async () => {
-    const files = { 'a.txt': enc('1\n2\n3') }
-    await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 0, 'end-anchor-line': 1, 'start-anchor': '', 'end-anchor': '1', content: 'HEAD' })
-    expect(decode(files)).toBe('HEAD\n1\n2\n3')
-  })
-
-  it('appends at the tail (end total+1, empty end-anchor)', async () => {
-    const files = { 'a.txt': enc('1\n2\n3') }
-    await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 3, 'end-anchor-line': 4, 'start-anchor': '3', 'end-anchor': '', content: 'TAIL' })
-    expect(decode(files)).toBe('1\n2\n3\nTAIL')
-  })
-
-  it('accepts empty-string head/tail sentinel lines', async () => {
-    const files = { 'a.txt': enc('1\n2') }
-    await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': '', 'end-anchor-line': 1, 'start-anchor': '', 'end-anchor': '1', content: 'HEAD' })
-    expect(decode(files)).toBe('HEAD\n1\n2')
-    const files2 = { 'a.txt': enc('1\n2') }
-    await editFile(fileCtx(files2), { path: 'a.txt', 'start-anchor-line': 2, 'end-anchor-line': '', 'start-anchor': '2', 'end-anchor': '', content: 'TAIL' })
-    expect(decode(files2)).toBe('1\n2\nTAIL')
-  })
-
-  it('inserts into an empty file (0,1)', async () => {
+  it('adds a new file', async () => {
     const files: Record<string, Uint8Array> = {}
-    await writeFile(fileCtx(files), { path: 'a.txt', content: '' })
-    await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 0, 'end-anchor-line': 1, 'start-anchor': '', 'end-anchor': '', content: 'first' })
-    expect(decode(files)).toBe('first')
+    const r = await patchFile(fileCtx(files), {
+      'patch-text': '*** Begin Patch\n*** Add File: a.txt\n+one\n+two\n*** End Patch',
+    })
+    expect(decode(files)).toBe('one\ntwo\n')
+    expect(r.data).toMatchObject({ files: 1, added: 2, removed: 0 })
   })
 
-  it('deletes the region when content is empty', async () => {
-    const files = { 'a.txt': enc('1\n2\n3\n4') }
-    await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 4, 'start-anchor': '1', 'end-anchor': '4', content: '' })
-    expect(decode(files)).toBe('1\n4')
+  it('updates an existing file and preserves trailing newline', async () => {
+    const files = { 'a.txt': enc('1\n2\n3\n') }
+    await patchFile(fileCtx(files), {
+      'patch-text': '*** Begin Patch\n*** Update File: a.txt\n@@\n-2\n+X\n*** End Patch',
+    })
+    expect(decode(files)).toBe('1\nX\n3\n')
   })
 
-  it('preserves the trailing newline', async () => {
-    const files = { 'a.txt': enc('alpha\nbeta\ngamma\n') }
-    await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': 'alpha', 'end-anchor': 'gamma', content: 'BETA' })
-    expect(decode(files)).toBe('alpha\nBETA\ngamma\n')
+  it('preserves CRLF and BOM across an update', async () => {
+    const files = { 'a.txt': enc('\uFEFFalpha\r\nbeta\r\n') }
+    await patchFile(fileCtx(files), {
+      'patch-text': '*** Begin Patch\n*** Update File: a.txt\n@@\n-beta\n+gamma\n*** End Patch',
+    })
+    expect(decode(files)).toBe('\uFEFFalpha\r\ngamma\r\n')
   })
 
-  it('preserves CRLF line endings across an edit', async () => {
-    const files = { 'a.txt': enc('alpha\r\nbeta\r\ngamma\r\n') }
-    await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': 'alpha', 'end-anchor': 'gamma', content: 'BETA' })
-    expect(decode(files)).toBe('alpha\r\nBETA\r\ngamma\r\n')
+  it('deletes a file', async () => {
+    const files = { 'a.txt': enc('x\n') }
+    const r = await patchFile(fileCtx(files), {
+      'patch-text': '*** Begin Patch\n*** Delete File: a.txt\n*** End Patch',
+    })
+    expect(files['a.txt']).toBeUndefined()
+    expect(r.data).toMatchObject({ files: 1, removed: 1 })
   })
 
-  it('preserves a UTF-8 BOM across an edit', async () => {
-    const files = { 'a.txt': enc('\uFEFFalpha\nbeta\ngamma\n') }
-    await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': 'alpha', 'end-anchor': 'gamma', content: 'BETA' })
-    expect(decode(files)).toBe('\uFEFFalpha\nBETA\ngamma\n')
+  it('applies multiple files atomically', async () => {
+    const files: Record<string, Uint8Array> = { 'b.txt': enc('old\n') }
+    await patchFile(fileCtx(files), {
+      'patch-text': `*** Begin Patch
+*** Add File: a.txt
++new
+*** Update File: b.txt
+@@
+-old
++updated
+*** End Patch`,
+    })
+    expect(decode(files, 'a.txt')).toBe('new\n')
+    expect(decode(files, 'b.txt')).toBe('updated\n')
   })
 
-  it('preserves CRLF + BOM together', async () => {
-    const files = { 'a.txt': enc('\uFEFFalpha\r\nbeta\r\ngamma\r\n') }
-    await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': 'alpha', 'end-anchor': 'gamma', content: 'BETA' })
-    expect(decode(files)).toBe('\uFEFFalpha\r\nBETA\r\ngamma\r\n')
+  it('rejects the whole patch (no writes) when a hunk fails', async () => {
+    const files = { 'b.txt': enc('old\n') }
+    const err = await patchFile(fileCtx(files), {
+      'patch-text': `*** Begin Patch
+*** Add File: a.txt
++new
+*** Update File: b.txt
+@@
+-DOESNOTEXIST
++updated
+*** End Patch`,
+    }).catch(e => e)
+    expect((err as TypedToolError).code).toBe('retryable')
+    // Nothing was written: a.txt must NOT exist and b.txt is unchanged.
+    expect(files['a.txt']).toBeUndefined()
+    expect(decode(files, 'b.txt')).toBe('old\n')
   })
 
-  it('rejects an out-of-range start anchor', async () => {
-    const ten = Array.from({ length: 10 }, (_, i) => `L${i + 1}`).join('\n') + '\n'
-    const files = { 'a.txt': enc(ten) }
-    const err = await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 11, 'end-anchor-line': 11, 'start-anchor': '', 'end-anchor': '', content: 'X' }).catch(e => e)
+  it('rejects a move', async () => {
+    const files = { 'a.txt': enc('x\n') }
+    const err = await patchFile(fileCtx(files), {
+      'patch-text': '*** Begin Patch\n*** Update File: a.txt\n*** Move to: b.txt\n@@\n-x\n+y\n*** End Patch',
+    }).catch(e => e)
+    expect((err as TypedToolError).code).toBe('invalid_argument')
+    expect(decode(files)).toBe('x\n')
+  })
+
+  it('requires patch-text', async () => {
+    const err = await patchFile(fileCtx({}), {}).catch(e => e)
     expect(err).toBeInstanceOf(TypedToolError)
     expect((err as TypedToolError).code).toBe('invalid_argument')
-    expect(decode(files)).toBe(ten)
-  })
-
-  it('rejects an out-of-range end anchor', async () => {
-    const files = { 'a.txt': enc('1\n2\n3\n') }
-    const err = await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 5, 'start-anchor': '1', 'end-anchor': '', content: 'X' }).catch(e => e)
-    expect((err as TypedToolError).code).toBe('invalid_argument')
-  })
-
-  it('rejects an inverted anchor pair', async () => {
-    const files = { 'a.txt': enc('1\n2\n3\n') }
-    const err = await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 2, 'end-anchor-line': 2, 'start-anchor': '', 'end-anchor': '', content: 'X' }).catch(e => e)
-    expect((err as TypedToolError).code).toBe('invalid_argument')
-  })
-
-  it('requires all four anchor arguments', async () => {
-    const files = { 'a.txt': enc('1\n2\n3\n') }
-    for (const missing of ['start-anchor-line', 'end-anchor-line', 'start-anchor', 'end-anchor']) {
-      const args: Record<string, unknown> = { path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': '1', 'end-anchor': '3', content: 'X' }
-      delete args[missing]
-      const err = await editFile(fileCtx(files), args).catch(e => e)
-      expect((err as TypedToolError).code).toBe('invalid_argument')
-      expect(String(err)).toContain(missing)
-    }
-  })
-
-  it('refuses the edit when an anchor content does not match (no write)', async () => {
-    const files = { 'a.txt': enc('alpha\nbeta\ngamma\n') }
-    const err = await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': 'WRONG', 'end-anchor': 'gamma', content: 'X' }).catch(e => e)
-    expect((err as TypedToolError).code).toBe('retryable')
-    expect(decode(files)).toBe('alpha\nbeta\ngamma\n')
-  })
-
-  it('refuses a non-blank anchor line given an empty anchor', async () => {
-    const files = { 'a.txt': enc('alpha\nbeta\n') }
-    const err = await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': '', 'end-anchor': '', content: 'X' }).catch(e => e)
-    expect((err as TypedToolError).code).toBe('retryable')
-    expect(decode(files)).toBe('alpha\nbeta\n')
-  })
-
-  it('accepts an empty anchor when the anchor line itself is blank', async () => {
-    const files = { 'a.txt': enc('alpha\n\nbeta\n') }
-    await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 2, 'end-anchor-line': 4, 'start-anchor': '', 'end-anchor': '', content: 'BETA' })
-    expect(decode(files)).toBe('alpha\n\nBETA\n')
   })
 
   it('returns a unified diff', async () => {
-    const files = { 'a.txt': enc('1\n2\n3\n4') }
-    const r = await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 4, 'start-anchor': '1', 'end-anchor': '4', content: 'X' })
-    expect(r.content).toContain('--- a/a.txt')
-    expect(r.content).toContain('-2')
-    expect(r.content).toContain('+X')
-    expect(r.data).toMatchObject({ added: 1, removed: 2 })
-  })
-
-  it('reports no changes when the edit is a no-op', async () => {
     const files = { 'a.txt': enc('1\n2\n3\n') }
-    const r = await editFile(fileCtx(files), { path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': '1', 'end-anchor': '3', content: '2' })
-    expect(String(r.content)).toContain('No changes')
+    const r = await patchFile(fileCtx(files), {
+      'patch-text': '*** Begin Patch\n*** Update File: a.txt\n@@\n-2\n+X\n*** End Patch',
+    })
+    expect(r.content).toContain('--- a/a.txt')
+    expect(r.content).toContain('+X')
   })
 })
-
 
 describe('read: server-side window', () => {
   it('reports the whole-file total while returning only the window', async () => {
@@ -338,23 +289,6 @@ describe('read: server-side window', () => {
     expect(r.content).toContain('3  l2')
     expect(r.content).toContain('showing lines 2-3 of 5')
     expect(r.data).toMatchObject({ total_lines: 5, start: 1, shown: 2 })
-  })
-})
-
-describe('rm', () => {
-  it('deletes a file', async () => {
-    const files = { 'a.txt': enc('x') }
-    const ctx = fileCtx(files)
-    await readFile(ctx, { path: 'a.txt' })
-    const r = await deleteFile(ctx, { path: 'a.txt' })
-    expect(r.content).toContain('a.txt')
-    expect(files['a.txt']).toBeUndefined()
-  })
-
-  it('missing path is typed invalid_argument', async () => {
-    const err = await deleteFile(fileCtx({}), {}).catch(e => e)
-    expect(err).toBeInstanceOf(TypedToolError)
-    expect((err as TypedToolError).code).toBe('invalid_argument')
   })
 })
 

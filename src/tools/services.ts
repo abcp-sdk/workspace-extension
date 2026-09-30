@@ -286,9 +286,9 @@ function parseProbe(raw: unknown): ProbeArgs | undefined {
 }
 
 /**
- * Parse the optional Tier 0 arguments shared by service-deploy / service-preview
- * into the gateway request fields. Every field is omitted when absent so a plain
- * deploy request stays minimal.
+ * Parse the optional Tier 0 arguments for service-deploy into the gateway
+ * request fields. Every field is omitted when absent so a plain deploy request
+ * stays minimal.
  */
 function parseTier0(args: Record<string, unknown>): Tier0Args {
   const out: Tier0Args = {}
@@ -413,7 +413,6 @@ export async function serviceList(
         image: s.image,
         url: s.url,
         session: s.session,
-        stage: s.stage,
         replicas: s.replicas,
         ready_replicas: s.readyReplicas,
         ready: s.ready,
@@ -423,67 +422,6 @@ export async function serviceList(
         ...podDiag(s),
       })),
     },
-  }
-}
-
-/** `service-preview`: deploy a session-bound, cluster-only preview service. */
-export async function servicePreview(
-  ctx: ServiceCtx,
-  args: Record<string, unknown>,
-): Promise<ToolResultData> {
-  const image = strArg(args, 'image')
-  if (image === '') {
-    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'image' }))
-  }
-  const env = args['env']
-  const envMap: Record<string, string> = {}
-  if (env !== null && typeof env === 'object' && !Array.isArray(env)) {
-    for (const [k, v] of Object.entries(env as Record<string, unknown>)) {
-      if (typeof v === 'string') envMap[k] = v
-    }
-  }
-  const command = args['command']
-  const commandList = Array.isArray(command) ? command.filter((c): c is string => typeof c === 'string') : []
-  const services = parseServices(args['services'])
-  const volumes = parseVolumes(args['volumes'])
-  const tier0 = parseTier0(args)
-  try {
-    const res = await ctx.workspace.previewService(
-      {
-        name: strArg(args, 'name'),
-        image,
-        containerPort: Math.trunc(numArg(args, 'container-port') ?? 0),
-        env: envMap,
-        cpu: strArg(args, 'cpu'),
-        memory: strArg(args, 'memory'),
-        command: commandList,
-        kvm: args['kvm'] === true,
-        gpuCount: Math.trunc(numArg(args, 'gpu-count') ?? 0),
-        services,
-        ttlSeconds: Math.trunc(numArg(args, 'ttl-seconds') ?? 0),
-        volumes,
-        ...tier0,
-      },
-      { headers: { 'X-Session-Name': ctx.session } },
-    )
-    const s = res.service
-    if (s === undefined) {
-      throw new TypedToolError('internal', tr(ctx.locale, 'serviceDeployFailed', { err: 'no service in response' }))
-    }
-    const diag = podDiag(s)
-    const diagLine = podDiagLine(ctx.locale, diag)
-    return {
-      content: tr(ctx.locale, 'servicePreviewed', { name: s.name, image: s.image, url: s.url }) +
-        (diagLine === '' ? '' : '\n' + diagLine),
-      data: {
-        name: s.name, image: s.image, url: s.url, stage: s.stage,
-        phase: s.phase, ready: s.ready, expires_at: Number(s.expiresAt),
-        ports: (s.ports ?? []).map(p => ({ name: p.name, preset: p.preset, port: p.port, protocol: p.protocol, target_port: p.targetPort })),
-        ...diag,
-      },
-    }
-  } catch (e) {
-    throw new TypedToolError('internal', tr(ctx.locale, 'serviceDeployFailed', { err: String(e) }))
   }
 }
 

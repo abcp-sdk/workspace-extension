@@ -284,21 +284,6 @@ export class Forgejo {
     }
   }
 
-  /** Report a branch's staging state (read-only; the staging write path is gone). */
-  async branchStatus(
-    org: string,
-    repo: string,
-    branch: string,
-    locale = 'en',
-  ): Promise<{ placeholder: boolean; staged: boolean; tip: string; mergeTip: string }> {
-    try {
-      const r = await this.gateway.branchStatus({ org, repo, branch })
-      return { placeholder: r.placeholder, staged: r.staged, tip: r.tip, mergeTip: r.mergeTip }
-    } catch (e) {
-      throw gatewayError(e, locale)
-    }
-  }
-
   // ---- history ----
 
   async listCommits(
