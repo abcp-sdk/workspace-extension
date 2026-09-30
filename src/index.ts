@@ -45,22 +45,17 @@ import {
   jobWait,
 } from './tools/jobs.js'
 import {
-  repoCommit,
-  repoDelete,
-  repoEdit,
   repoList,
   repoRead,
-  repoWrite,
   type RepoCtx,
 } from './tools/repo-content.js'
 import {
-  repoBranchCreate,
   repoBranches,
   repoDiff,
   repoExplore,
   repoLog,
+  repoMrClose,
   repoMrComment,
-  repoMrCreate,
   repoMrList,
   repoMrMerge,
   repoShow,
@@ -76,9 +71,8 @@ import {
   repoRemove,
   repoSetPushMirror,
 } from './tools/repo-admin.js'
-import { repoBranchSync, repoRestore } from './tools/repo-sync.js'
 import { repoMailSend, type MailCtx } from './tools/mail.js'
-import { sandboxCheckout, sandboxPort, type BridgeCtx } from './tools/bridge.js'
+import { sandboxCheckout, sandboxSubmitMR, type BridgeCtx } from './tools/bridge.js'
 import {
   branchRefOf,
   checkoutIntoSandbox,
@@ -481,7 +475,7 @@ export function createWorkspaceConfig(
     'sandbox-file-download': fileWrap(downloadFile),
     'sandbox-file-upload': fileWrap(uploadFile),
     'sandbox-checkout': bridgeWrap(sandboxCheckout),
-    'sandbox-port': bridgeWrap(sandboxPort),
+    'sandbox-submit-mr': bridgeWrap(sandboxSubmitMR),
 
     // ---- repo-* ----
     'repo-explore': repoWrap(repoExplore),
@@ -516,24 +510,17 @@ export function createWorkspaceConfig(
     'pvc-list': pvcWrap(pvcList),
     'pvc-delete': pvcWrap(pvcDelete),
     'repo-file-read': repoWrap(repoRead),
-    'repo-file-write': repoWrap(repoWrite),
-    'repo-file-edit': repoWrap(repoEdit),
-    'repo-file-delete': repoWrap(repoDelete),
     'repo-file-list': repoWrap(repoList),
-    'repo-commit': repoWrap(repoCommit),
     'repo-log': repoWrap(repoLog),
     'repo-show': repoWrap(repoShow),
     'repo-diff': repoWrap(repoDiff),
     'repo-branches': repoWrap(repoBranches),
-    'repo-branch-create': repoWrap(repoBranchCreate),
     'repo-tags': repoWrap(repoTags),
     'repo-tag-create': repoWrap(repoTagCreate),
-    'repo-mr-create': repoWrap(repoMrCreate),
     'repo-mr-list': repoWrap(repoMrList),
     'repo-mr-comment': repoWrap(repoMrComment),
     'repo-mr-merge': repoWrap(repoMrMerge),
-    'repo-branch-sync': repoWrap(repoBranchSync),
-    'repo-file-restore': repoWrap(repoRestore),
+    'repo-mr-close': repoWrap(repoMrClose),
   }
 
   const tools: Record<string, ToolSpec['execute']> = handlers

@@ -2,21 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { TypedToolError } from '@abc-protocol/sdk'
 import { Forgejo } from '../src/forgejo.js'
 import type { WorkspaceDeps } from '../src/deps.js'
-import {
-  repoEdit,
-  repoRead,
-  repoWrite,
-  type RepoCtx,
-} from '../src/tools/repo-content.js'
+import { repoRead, type RepoCtx } from '../src/tools/repo-content.js'
 
 /**
  * In-memory repo backing a real gateway-backed Forgejo client. The file map is
- * `path -> { text, sha }`; sha is bumped per mutation so the read-before-edit
- * freshness check works.
+ * `path -> { text, sha }`.
  *
  * `contents` models the REAL gateway: its `text` is a protobuf `string`, whose
  * decoder STRIPS a leading BOM. `readRaw` carries `bytes`, so the BOM survives.
- * A BOM round-trip test therefore only passes when the edit reads via `readRaw`.
  */
 function fakeRepo() {
   const files = new Map<string, { text: string; sha: string }>()
@@ -38,16 +31,6 @@ function fakeRepo() {
             if (f === undefined) throw { code: 'not_found', message: 'not found' }
             return { data: new TextEncoder().encode(f.text), sha: f.sha, mime: 'text/plain', isText: true }
           }
-          if (prop === 'commitFiles' || prop === 'applyFiles') {
-            for (const f of (req['files'] as Array<Record<string, unknown>>) ?? []) {
-              const p = f['path'] as string
-              if (f['operation'] === 'delete') { files.delete(p); continue }
-              const bytes = f['contentBytes'] as Uint8Array | undefined
-              const text = bytes !== undefined && bytes.length > 0 ? new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes) : (f['content'] as string) ?? ''
-              files.set(p, { text, sha: sha() })
-            }
-            return { sha: sha() }
-          }
           if (prop === 'repoMeta') return { org: req['org'], repo: req['repo'], defaultBranch: 'main', private: true, empty: false }
           return {}
         },
@@ -61,95 +44,24 @@ function ctx(forgejo: Forgejo): RepoCtx {
   return { forgejo, deps, tenant: 't', session: 'o:r:feat', locale: 'en' }
 }
 
-describe('repo anchor-line edit', () => {
-  it('replaces the region between two anchors (no read needed)', async () => {
+describe('repo-file-read', () => {
+  it('reads a window with line numbers', async () => {
     const { files, forgejo } = fakeRepo()
     const c = ctx(forgejo)
-    files.set('a.txt', { text: '1\n2\n3\n4\n', sha: 'base' })
-    await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 4, 'start-anchor': '1', 'end-anchor': '4', content: 'X' })
-    expect(files.get('a.txt')!.text).toBe('1\nX\n4\n')
+    files.set('a.txt', { text: 'l1\nl2\nl3\nl4\n', sha: 'base' })
+    const r = await repoRead(c, { org: 'o', repo: 'r', path: 'a.txt', offset: 1, limit: 2 })
+    expect(String(r.content)).toContain('2  l2')
+    expect(String(r.content)).toContain('3  l3')
   })
 
-  it('inserts between adjacent anchors', async () => {
+  it('defaults ref to the session branch', async () => {
     const { files, forgejo } = fakeRepo()
     const c = ctx(forgejo)
-    files.set('a.txt', { text: '1\n2\n3\n', sha: 'base' })
-    await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 2, 'start-anchor': '1', 'end-anchor': '2', content: 'X' })
-    expect(files.get('a.txt')!.text).toBe('1\nX\n2\n3\n')
-  })
-
-  it('prepends at the head and appends at the tail', async () => {
-    const { files, forgejo } = fakeRepo()
-    const c = ctx(forgejo)
-    files.set('a.txt', { text: '1\n2\n', sha: 'base' })
-    await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 0, 'end-anchor-line': 1, 'start-anchor': '', 'end-anchor': '1', content: 'HEAD' })
-    expect(files.get('a.txt')!.text).toBe('HEAD\n1\n2\n')
-    await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 3, 'end-anchor-line': '', 'start-anchor': '2', 'end-anchor': '', content: 'TAIL' })
-    expect(files.get('a.txt')!.text).toBe('HEAD\n1\n2\nTAIL\n')
-  })
-
-  it('returns a unified diff on edit', async () => {
-    const { files, forgejo } = fakeRepo()
-    const c = ctx(forgejo)
-    files.set('a.txt', { text: '1\n2\n3\n', sha: 's1' })
-    const r = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': '1', 'end-anchor': '3', content: 'X' })
-    expect(r.content).toContain('--- a/a.txt')
-    expect(r.content).toContain('-2')
-    expect(r.content).toContain('+X')
-  })
-
-  it('rejects an out-of-range anchor (no commit)', async () => {
-    const { files, forgejo } = fakeRepo()
-    const c = ctx(forgejo)
-    files.set('a.txt', { text: 'alpha\nbeta\n', sha: 's1' })
-    const err = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 5, 'end-anchor-line': 6, 'start-anchor': '', 'end-anchor': '', content: 'X' }).catch(e => e)
-    expect(err).toBeInstanceOf(TypedToolError)
-    expect((err as TypedToolError).code).toBe('invalid_argument')
-    expect(files.get('a.txt')!.text).toBe('alpha\nbeta\n')
-  })
-
-  it('refuses the edit when an anchor content does not match (no commit)', async () => {
-    const { files, forgejo } = fakeRepo()
-    const c = ctx(forgejo)
-    files.set('a.txt', { text: 'alpha\nbeta\n', sha: 's1' })
-    const err = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': 'WRONG', 'end-anchor': '', content: 'X' }).catch(e => e)
-    expect((err as TypedToolError).code).toBe('retryable')
-    expect(files.get('a.txt')!.text).toBe('alpha\nbeta\n')
-  })
-
-  it('accepts an empty anchor when the anchor line itself is blank', async () => {
-    const { files, forgejo } = fakeRepo()
-    const c = ctx(forgejo)
-    files.set('a.txt', { text: 'alpha\n\nbeta\n', sha: 'base' })
-    await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 2, 'end-anchor-line': 4, 'start-anchor': '', 'end-anchor': '', content: 'BETA' })
-    expect(files.get('a.txt')!.text).toBe('alpha\n\nBETA\n')
-  })
-
-  it('reports no changes on a no-op edit', async () => {
-    const { files, forgejo } = fakeRepo()
-    const c = ctx(forgejo)
-    files.set('a.txt', { text: '1\n2\n', sha: 's1' })
-    const r = await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': '1', 'end-anchor': '', content: '2' })
-    expect(String(r.content)).toContain('No changes')
-  })
-
-  it('preserves CRLF line endings across an edit', async () => {
-    const { files, forgejo } = fakeRepo()
-    const c = ctx(forgejo)
-    files.set('a.txt', { text: '1\r\n2\r\n3\r\n', sha: 'base' })
-    await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': '1', 'end-anchor': '3', content: 'X' })
-    expect(files.get('a.txt')!.text).toBe('1\r\nX\r\n3\r\n')
-  })
-
-  it('preserves a UTF-8 BOM across an edit', async () => {
-    const { files, forgejo } = fakeRepo()
-    const c = ctx(forgejo)
-    files.set('a.txt', { text: '\uFEFF1\n2\n3\n', sha: 'base' })
-    await repoEdit(c, { org: 'o', repo: 'r', path: 'a.txt', 'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': '1', 'end-anchor': '3', content: 'X' })
-    expect(files.get('a.txt')!.text).toBe('\uFEFF1\nX\n3\n')
+    files.set('a.txt', { text: 'x\n', sha: 'base' })
+    const r = await repoRead(c, { org: 'o', repo: 'r', path: 'a.txt' })
+    expect((r.data as Record<string, unknown>)['ref']).toBe('feat')
   })
 })
-
 
 describe('repo naming validation', () => {
   it('rejects illegal org/repo/ref names', async () => {

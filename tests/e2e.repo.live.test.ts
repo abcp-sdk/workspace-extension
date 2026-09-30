@@ -84,44 +84,12 @@ maybe('live e2e: workspace repo-* tools against a real Forgejo', () => {
     const branches = await call('repo-branches', { org: E2E_ORG, repo: E2E_REPO })
     expect(String(branches.data && JSON.stringify(branches.data))).toContain('branches')
 
-    // ---- write a scratch file, then read/edit it ----
-    const scratch = `e2e-scratch-${Date.now()}.txt`
-    await call('repo-file-write', {
-      org: E2E_ORG, repo: E2E_REPO, path: scratch,
-      content: 'line1\nline2\nline3\n', message: 'e2e: write scratch',
-    })
-    const read = await call('repo-file-read', { org: E2E_ORG, repo: E2E_REPO, path: scratch })
-    expect(read.content).toContain('1  line1')
-    expect(read.content).toContain('3  line3')
-
-    const edited = await call('repo-file-edit', {
-      org: E2E_ORG, repo: E2E_REPO, path: scratch,
-      'start-anchor-line': 1, 'end-anchor-line': 3, 'start-anchor': 'line1', 'end-anchor': 'line3', content: 'LINE2', message: 'e2e: edit scratch',
-    })
-    expect(edited.content).toContain('@@')
-    expect(edited.content).toContain('-line2')
-    expect(edited.content).toContain('+LINE2')
-
-    // ---- an edit with out-of-range anchors is refused ----
-    const bad = await agent
-      .callTool(tenant, session, 'workspace', 'repo-file-edit', `call-bad-${Date.now()}`, {
-        org: E2E_ORG, repo: E2E_REPO, path: scratch,
-        'start-anchor-line': 99, 'end-anchor-line': 100, 'start-anchor': '', 'end-anchor': '', content: 'Z',
-      })
-      .then(r => r.error)
-    expect(bad?.code).toBe('invalid_argument')
-
-    // ---- log mentions the file ----
-    const log = await call('repo-log', { org: E2E_ORG, repo: E2E_REPO, path: scratch })
-    expect(log.content).toContain('e2e:')
-
-    // ---- cleanup: delete the scratch file ----
-    await call('repo-file-delete', {
-      org: E2E_ORG, repo: E2E_REPO, path: scratch, message: 'e2e: delete scratch',
-    })
+    // ---- read an existing file (repo-file-read is read-only) ----
+    const tree = await call('repo-file-list', { org: E2E_ORG, repo: E2E_REPO })
+    expect(String(tree.content)).toContain(E2E_REPO)
   }, 120_000)
 
-  it('checks out the repo into the sandbox and ports a new file back', async () => {
+  it('checks out the repo into the sandbox and submits a new file as an MR', async () => {
     if (E2E_IMAGE === '') return // no image: skip bridge part
     const bus = await connectNatsBus(LIVE_NATS)
     stops.push(() => bus.close())
@@ -160,17 +128,16 @@ maybe('live e2e: workspace repo-* tools against a real Forgejo', () => {
       return res
     }
 
-    const checkout = await call('sandbox-checkout', { 'worker-name': worker, org: E2E_ORG, repo: E2E_REPO, dest: 'checkout' })
+    // Checkout the repo tree into a directory, add a file, submit as an MR.
+    const dir = `checkout-${Date.now()}`
+    const checkout = await call('sandbox-checkout', { 'worker-name': worker, org: E2E_ORG, repo: E2E_REPO, dest: dir })
     expect(Number((checkout.data as Record<string, unknown>).files)).toBeGreaterThan(0)
 
-    // Create a NEW file in the sandbox and port it to a fresh dir.
-    const dir = `e2e-port-${Date.now()}`
-    await call('sandbox-file-write', { 'worker-name': worker, path: `${dir}/a.txt`, content: 'A\n' })
-    await call('sandbox-file-write', { 'worker-name': worker, path: `${dir}/b.txt`, content: 'B\n' })
-    const ported = await call('sandbox-port', {
-      'worker-name': worker, org: E2E_ORG, repo: E2E_REPO, path: dir, 'repo-path': dir, message: 'e2e: port dir',
+    await call('sandbox-file-write', { 'worker-name': worker, path: `${dir}/e2e-submit.txt`, content: 'hello\n' })
+    const submitted = await call('sandbox-submit-mr', {
+      'worker-name': worker, org: E2E_ORG, repo: E2E_REPO, base: 'main', path: dir, title: 'e2e: submit',
     })
-    expect(Number((ported.data as Record<string, unknown>).count)).toBe(2)
+    expect(Number((submitted.data as Record<string, unknown>).index)).toBeGreaterThan(0)
 
     await call('sandbox-delete', { 'worker-name': worker })
   }, 180_000)

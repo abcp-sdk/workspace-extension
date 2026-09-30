@@ -86,7 +86,7 @@ export function sessionRepo(session: string): { org: string; repo: string; branc
 
 /**
  * Read `org`/`repo` for a tool that may ONLY act on the CALLER'S OWN repository
- * (repo-branch-create / repo-tag-create / repo-branch-sync). Both arguments are
+ * (repo-tag-create). Both arguments are
  * OPTIONAL and default to the session's own `org`/`repo`; when supplied they
  * MUST match the session's repository, otherwise `permission_denied`. A session
  * that is not bound to a branch (`sessionRepo` null) must pass both explicitly.
@@ -130,20 +130,6 @@ export async function resolveRepoRef(
 /** The seen-state key for a repo file (path namespaced by org/repo@ref). */
 export function repoKey(r: RepoRef, path: string): string {
   return `${r.org}/${r.repo}@${r.ref}:${path}`
-}
-
-/**
- * Resolve the branch a WRITE targets. An explicit `ref` wins; otherwise the
- * session's own branch (staging rewrites HEAD, so a write must never land on
- * the default branch by omission). Throws when the session has no branch and no
- * ref was given.
- */
-function writeRepoRef(ctx: RepoCtx, args: Record<string, unknown>): RepoRef {
-  const r = repoRef(args, ctx.locale)
-  if (r.ref !== '') return r
-  const branch = sessionBranch(ctx.session)
-  if (branch !== '') return { ...r, ref: branch }
-  throw new TypedToolError('invalid_argument', tr(ctx.locale, 'writeNeedsBranch'))
 }
 
 /**
@@ -205,161 +191,6 @@ export async function repoRead(
   return { content, data: { org: r.org, repo: r.repo, ref: r.ref, path, sha: got.sha, total_lines: win.total, start: win.start, shown } }
 }
 
-/** `repo-file-write`: overwrite one file (one commit). */
-export async function repoWrite(
-  ctx: RepoCtx,
-  args: Record<string, unknown>,
-): Promise<ToolResultData> {
-  const r = writeRepoRef(ctx, args)
-  const path = requireArg(args, 'path', ctx.locale)
-  const content = strArg(args, 'content')
-  const message = strArg(args, 'message') || `write ${path}`
-  const bytes = Buffer.byteLength(content, 'utf8')
-  if (bytes > 120 * 1024) {
-    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'writeTooLarge', { path, bytes, limit: humanSize(120 * 1024) }))
-  }
-
-  // Optimistic lock: pass the current blob sha when the file exists. Keep the
-  // old text so the card can render a unified diff.
-  let baseSha = ''
-  let before = ''
-  try {
-    const cur = await ctx.forgejo.getContents(r.org, r.repo, path, r.ref, ctx.locale)
-    if (cur.kind === 'file') {
-      baseSha = cur.sha
-      before = cur.text
-    }
-  } catch {
-    // absent -> create
-  }
-  const res = await ctx.forgejo.putFile(r.org, r.repo, path, content, message, {
-    ref: r.ref,
-    ...(baseSha !== '' ? { sha: baseSha } : {}),
-    locale: ctx.locale,
-  })
-  const fanned = ctx.fanout !== undefined ? await ctx.fanout(r.org, r.repo, r.ref, res.sha) : 0
-  const note = fanned > 0 ? `\n${tr(ctx.locale, 'fanoutUpdated', { count: fanned })}` : ''
-  const diff = unifiedDiff(before, content, path)
-  return {
-    content: tr(ctx.locale, 'repoWrote', { path, org: r.org, repo: r.repo, ref: r.ref || 'HEAD', sha: short(res.sha) }) + note,
-    data: { path, org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, base_sha: baseSha, added: diff.added, removed: diff.removed, diff: diff.text, fanned },
-  }
-}
-
-/** `repo-file-edit`: anchor-line edit (one commit) + unified diff. */
-export async function repoEdit(
-  ctx: RepoCtx,
-  args: Record<string, unknown>,
-): Promise<ToolResultData> {
-  const r = writeRepoRef(ctx, args)
-  const path = requireArg(args, 'path', ctx.locale)
-  const content = strArg(args, 'content')
-  const message = strArg(args, 'message') || `edit ${path}`
-  const startAnchorText = strArg(args, 'start-anchor')
-  const endAnchorText = strArg(args, 'end-anchor')
-
-  // All four anchor arguments are REQUIRED (present, though the content may be
-  // "" at the head/tail).
-  for (const key of [
-    'start-anchor-line',
-    'end-anchor-line',
-    'start-anchor',
-    'end-anchor',
-  ]) {
-    if (!hasArg(args, key)) {
-      throw new TypedToolError('invalid_argument', tr(ctx.locale, 'editAnchorRequired', { key }))
-    }
-  }
-
-  // Read via the BYTE path (ReadRaw): `getContents` returns a protobuf `string`
-  // whose decoder STRIPS a leading BOM, so a BOM file would lose its marker on
-  // write. `getFileText` keeps the BOM (and the sha) intact.
-  const got = await ctx.forgejo.getFileText(r.org, r.repo, path, r.ref, ctx.locale)
-  if (got === null) throw new TypedToolError('not_found', tr(ctx.locale, 'forgejoNotFound', { msg: path }))
-
-  const file = toFileLines(got.text)
-  const total = file.lines.length
-  const inserted = content === '' ? [] : toFileLines(content).lines
-
-  // `start-anchor-line` / `end-anchor-line` are required. An EMPTY STRING is the
-  // sentinel for the head (start => 0) and the tail (end => total + 1).
-  const startAnchor = anchorArg(args, 'start-anchor-line', 0)
-  const endAnchor = anchorArg(args, 'end-anchor-line', total + 1)
-
-  // Strict bounds (no silent clamping).
-  const resolved = resolveEditTarget(startAnchor, endAnchor, total)
-  if (!resolved.ok) {
-    throw rangeError(ctx.locale, path, total, resolved.reason, startAnchor, endAnchor)
-  }
-
-  // Anchor-content validation: the UNCHANGED line above (start-anchor-line) and
-  // below (end-anchor-line) the region must match the caller's copy.
-  const startCheck = checkAnchor(file.lines, startAnchor, startAnchorText, total)
-  if (!startCheck.ok) {
-    throw anchorError(ctx.locale, path, 'start', startAnchor, total, startCheck)
-  }
-  const endCheck = checkAnchor(file.lines, endAnchor, endAnchorText, total)
-  if (!endCheck.ok) {
-    throw anchorError(ctx.locale, path, 'end', endAnchor, total, endCheck)
-  }
-
-  const next = applyEdit(file.lines, resolved.target, inserted)
-
-  const out = joinFileLines({ ...file, lines: next })
-  if (out === got.text) {
-    return { content: tr(ctx.locale, 'repoNoChanges', { path, org: r.org, repo: r.repo, ref: r.ref || 'HEAD' }) }
-  }
-
-  const res = await ctx.forgejo.putFile(r.org, r.repo, path, out, message, {
-    ref: r.ref,
-    sha: got.sha,
-    locale: ctx.locale,
-  })
-
-  const diff = unifiedDiff(got.text, out, path)
-  const summary = tr(ctx.locale, 'repoEditSummary', {
-    path, org: r.org, repo: r.repo, ref: r.ref || 'HEAD',
-    added: diff.added, removed: diff.removed, sha: short(res.sha),
-  })
-  const capped = capLines(diff.text.split('\n'))
-  let body = capped.kept.join('\n')
-  if (capped.truncated) body += truncationNote(capped, capped.kept.length, diff.text.split('\n').length, ctx.locale)
-  const fanned = ctx.fanout !== undefined ? await ctx.fanout(r.org, r.repo, r.ref, res.sha) : 0
-  const note = fanned > 0 ? `\n${tr(ctx.locale, 'fanoutUpdated', { count: fanned })}` : ''
-  return {
-    content: `${summary}\n\n${body}${note}`,
-    data: { path, org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, added: diff.added, removed: diff.removed, diff: diff.text, fanned },
-  }
-}
-
-/** `repo-file-delete`: delete one file (one commit). */
-export async function repoDelete(
-  ctx: RepoCtx,
-  args: Record<string, unknown>,
-): Promise<ToolResultData> {
-  const r = writeRepoRef(ctx, args)
-  const path = requireArg(args, 'path', ctx.locale)
-  const message = strArg(args, 'message') || `delete ${path}`
-  let baseSha = ''
-  try {
-    const cur = await ctx.forgejo.getContents(r.org, r.repo, path, r.ref, ctx.locale)
-    if (cur.kind === 'file') baseSha = cur.sha
-  } catch {
-    // absent
-  }
-  const res = await ctx.forgejo.deleteFile(r.org, r.repo, path, message, {
-    ref: r.ref,
-    ...(baseSha !== '' ? { sha: baseSha } : {}),
-    locale: ctx.locale,
-  })
-  const fanned = ctx.fanout !== undefined ? await ctx.fanout(r.org, r.repo, r.ref, res.sha) : 0
-  const note = fanned > 0 ? `\n${tr(ctx.locale, 'fanoutUpdated', { count: fanned })}` : ''
-  return {
-    content: tr(ctx.locale, 'repoDeleted', { path, org: r.org, repo: r.repo, ref: r.ref || 'HEAD', sha: short(res.sha) }) + note,
-    data: { path, org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, fanned },
-  }
-}
-
 /** `repo-file-list`: list a directory (or the repo tree root). */
 export async function repoList(
   ctx: RepoCtx,
@@ -377,29 +208,6 @@ export async function repoList(
   let content = tr(ctx.locale, 'repoTreeHeader', { org: r.org, repo: r.repo, ref: r.ref || 'HEAD', count: entries.length }) + '\n' + capped.kept.join('\n')
   if (capped.truncated) content += truncationNote(capped, capped.kept.length, lines.length, ctx.locale)
   return { content, data: { org: r.org, repo: r.repo, ref: r.ref, entries: entries.map(e => ({ path: e.path, type: e.type, size: e.size })) } }
-}
-
-/**
- * `repo-commit`: finalize the branch's staged changes under `message` and open a
- * fresh staging commit. There is no file list: writes/edits/deletes accumulate
- * in the staging commit and this tool names it.
- */
-export async function repoCommit(
-  ctx: RepoCtx,
-  args: Record<string, unknown>,
-): Promise<ToolResultData> {
-  const r = writeRepoRef(ctx, args)
-  const message = requireArg(args, 'message', ctx.locale)
-  if (message.trim() === '') {
-    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'message' }))
-  }
-  const res = await ctx.forgejo.commitStaged(r.org, r.repo, r.ref, message, ctx.locale)
-  const fanned = ctx.fanout !== undefined ? await ctx.fanout(r.org, r.repo, r.ref, res.sha) : 0
-  const note = fanned > 0 ? `\n${tr(ctx.locale, 'fanoutUpdated', { count: fanned })}` : ''
-  return {
-    content: tr(ctx.locale, 'repoCommitted', { org: r.org, repo: r.repo, ref: r.ref || 'HEAD', sha: short(res.sha) }) + note,
-    data: { org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, fanned },
-  }
 }
 
 function short(sha: string): string {

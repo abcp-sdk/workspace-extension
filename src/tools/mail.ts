@@ -7,7 +7,6 @@ import { strArg } from './shared.js'
 import { validComponent } from './repo-content.js'
 import { parseSessionName } from './lifecycle.js'
 
-const MAIN = 'main'
 
 export interface MailCtx {
   forgejo: Forgejo
@@ -32,19 +31,14 @@ export interface MailCtx {
  * Addressing is by REPO + BRANCH (branch defaults to `main`), NOT by session
  * name: the tool resolves `org:repo:branch`, ensures the branch session exists
  * (repo:branch <-> session, 1:1), then publishes directly onto the NATS mailbox
- * — the same channel the HTTP prompt route uses. This replaces the bundled
- * `mail-send` (which required an existing session by name).
+ * — the same channel the HTTP prompt route uses.
+ *
+ * ALL real branches are PEERS: a session may message any branch of any
+ * repository it can see (cross-repo allowed). The one restriction is that a
+ * target may NOT be an `mr/...` branch (a system MR head has no session).
  *
  * The branch MUST exist in Forgejo: a message that would create a session with
  * no corresponding branch is refused (the mapping is strictly 1:1).
- *
- * AUTHORIZATION (a branch session is bound to ONE repo; messaging is
- * role-scoped, not tenant-wide):
- *   - a DEVELOPER (branch != main) may only message `main` of its OWN repo —
- *     i.e. report back to / request review from the maintainer;
- *   - a MAINTAINER (main) may message any branch of its own repo, and may
- *     message `main` of ANOTHER repo (peer maintainer coordination) — but never
- *     a non-main branch of another repo.
  * Cross-tenant targets remain invisible (the gateway's tenant scoping).
  */
 export async function repoMailSend(
@@ -62,20 +56,15 @@ export async function repoMailSend(
   if (!validComponent(org) || !validComponent(repo) || !validComponent(branch)) {
     throw new TypedToolError('invalid_argument', tr(ctx.locale, 'invalidName', { key: 'org/repo/branch', value: `${org}/${repo}:${branch}` }))
   }
+  // An `mr/...` branch is a system MR head with no session — never a target.
+  if (branch.startsWith('mr/')) {
+    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'mailMrBranchRefused', { branch }))
+  }
 
-  // A branch session may only message per its role (see the doc above).
+  // The caller must be a branch session (it has a repo identity).
   const self = parseSessionName(ctx.session)
   if (self === null) {
     throw new TypedToolError('permission_denied', tr(ctx.locale, 'mailNeedsBranchSession'))
-  }
-  const sameRepo = self.org === org && self.repo === repo
-  if (!sameRepo && branch !== MAIN) {
-    // Cross-repo messaging is maintainer-only AND only to a peer `main`.
-    throw new TypedToolError('permission_denied', tr(ctx.locale, 'mailCrossRepoMainOnly', { org, repo, branch }))
-  }
-  if (self.branch !== MAIN && !(sameRepo && branch === MAIN)) {
-    // A developer may only message its OWN repo's main (never another branch).
-    throw new TypedToolError('permission_denied', tr(ctx.locale, 'mailDeveloperMainOnly'))
   }
   if (self.org === org && self.repo === repo && self.branch === branch) {
     throw new TypedToolError('permission_denied', tr(ctx.locale, 'mailSelfDenied', { session: ctx.session }))

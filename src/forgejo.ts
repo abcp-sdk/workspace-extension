@@ -249,69 +249,42 @@ export class Forgejo {
     return { text: new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes), sha: meta.sha }
   }
 
-  async putFile(
-    org: string,
-    repo: string,
-    path: string,
-    content: string,
-    _message: string,
-    opts: { ref?: string; sha?: string; newBranch?: string; locale?: string } = {},
-  ): Promise<CommitResult> {
-    return this.applyFiles(
-      org,
-      repo,
-      [{ path, operation: opts.sha !== undefined && opts.sha !== '' ? 'update' : 'create', content }],
-      opts,
-    )
-  }
-
-  async deleteFile(
-    org: string,
-    repo: string,
-    path: string,
-    _message: string,
-    opts: { ref?: string; sha?: string; locale?: string } = {},
-  ): Promise<CommitResult> {
-    return this.applyFiles(
-      org,
-      repo,
-      [{ path, operation: 'delete', ...(opts.sha !== undefined && opts.sha !== '' ? { sha: opts.sha } : {}) }],
-      opts,
-    )
-  }
-
   /**
-   * Apply file changes to a branch's STAGING commit (amend semantics): the
-   * gateway rewinds HEAD's placeholder, so a sequence of writes/edits/deletes
-   * accumulates in one commit until `commitStaged` finalizes it.
+   * Submit a change request: the gateway materializes `files` (a full change
+   * set vs `base`, including deletes) onto a NEW immutable `mr/...` head branch
+   * and opens the MR. This is the ONLY write path — there is no direct branch
+   * write. Returns the MR index/url and the created head branch.
    */
-  async applyFiles(
+  async submitMR(
     org: string,
     repo: string,
+    base: string,
+    title: string,
+    body: string,
     files: CommitFile[],
-    opts: { ref?: string; locale?: string } = {},
-  ): Promise<CommitResult> {
+    locale = 'en',
+  ): Promise<{ index: number; url: string; head: string }> {
     try {
-      const r = await this.gateway.applyFiles({
+      const r = await this.gateway.submitMR({
         org,
         repo,
-        branch: opts.ref ?? '',
+        base,
+        title,
+        body,
         files: files.map(f => ({
           path: f.path,
           operation: f.operation ?? 'update',
           content: f.content ?? '',
           contentBytes: f.contentBytes ?? new Uint8Array(),
-          sha: f.sha ?? '',
-          fromPath: f.fromPath ?? '',
         })),
       })
-      return { sha: r.sha, message: '' }
+      return { index: r.index, url: r.url, head: r.head }
     } catch (e) {
-      throw gatewayError(e, opts.locale ?? 'en')
+      throw gatewayError(e, locale)
     }
   }
 
-  /** Report a branch's staging state (placeholder present / staged / merge tip). */
+  /** Report a branch's staging state (read-only; the staging write path is gone). */
   async branchStatus(
     org: string,
     repo: string,
@@ -323,45 +296,6 @@ export class Forgejo {
       return { placeholder: r.placeholder, staged: r.staged, tip: r.tip, mergeTip: r.mergeTip }
     } catch (e) {
       throw gatewayError(e, locale)
-    }
-  }
-
-  /** Finalize the branch's staging commit under `message` and open a fresh one. */
-  async commitStaged(org: string, repo: string, branch: string, message: string, locale = 'en'): Promise<CommitResult> {
-    try {
-      const r = await this.gateway.commitStaged({ org, repo, branch, message })
-      return { sha: r.sha, message }
-    } catch (e) {
-      throw gatewayError(e, locale)
-    }
-  }
-
-  async commitFiles(
-    org: string,
-    repo: string,
-    files: CommitFile[],
-    message: string,
-    opts: { ref?: string; newBranch?: string; locale?: string } = {},
-  ): Promise<CommitResult> {
-    try {
-      const r = await this.gateway.commitFiles({
-        org,
-        repo,
-        message,
-        ref: opts.ref ?? '',
-        newBranch: opts.newBranch ?? '',
-        files: files.map(f => ({
-          path: f.path,
-          operation: f.operation ?? 'update',
-          content: f.content ?? '',
-          contentBytes: f.contentBytes ?? new Uint8Array(),
-          sha: f.sha ?? '',
-          fromPath: f.fromPath ?? '',
-        })),
-      })
-      return { sha: r.sha, message: '' }
-    } catch (e) {
-      throw gatewayError(e, opts.locale ?? 'en')
     }
   }
 
@@ -443,12 +377,63 @@ export class Forgejo {
     }
   }
 
+  /** Merge an MR (allowed only when the caller's session owns its base branch). */
+  async mergeMR(org: string, repo: string, index: number, locale = 'en'): Promise<void> {
+    try {
+      await this.gateway.mergeMR({ org, repo, index })
+    } catch (e) {
+      throw gatewayError(e, locale)
+    }
+  }
+
+  /** Close an MR (allowed only when the caller's session owns its base branch). */
+  async closeMR(org: string, repo: string, index: number, locale = 'en'): Promise<void> {
+    try {
+      await this.gateway.closeMR({ org, repo, index })
+    } catch (e) {
+      throw gatewayError(e, locale)
+    }
+  }
+
+  async getMR(
+    org: string,
+    repo: string,
+    index: number,
+    locale = 'en',
+  ): Promise<{ index: number; title: string; state: string; head: string; base: string; mergeable: boolean; merged: boolean }> {
+    try {
+      const r = await this.gateway.getMR({ org, repo, index })
+      const m = r.mr
+      return {
+        index: m?.index ?? index, title: m?.title ?? '', state: m?.state ?? '',
+        head: m?.head ?? '', base: m?.base ?? '',
+        mergeable: m?.mergeable ?? false, merged: m?.merged ?? false,
+      }
+    } catch (e) {
+      throw gatewayError(e, locale)
+    }
+  }
+
   // ---- archive (checkout) ----
 
   async archiveTarGz(org: string, repo: string, ref: string, locale = 'en'): Promise<Uint8Array> {
     try {
       const r = await this.gateway.archive({ org, repo, ref })
       return r.data
+    } catch (e) {
+      throw gatewayError(e, locale)
+    }
+  }
+
+  /** List the recursive file paths (files only) of a ref's tree. */
+  async listTree(org: string, repo: string, ref: string, locale = 'en'): Promise<Set<string>> {
+    try {
+      const r = await this.gateway.tree({ org, repo, ref, path: '' })
+      const out = new Set<string>()
+      for (const e of r.entries ?? []) {
+        if (e.type !== 'dir') out.add(e.path)
+      }
+      return out
     } catch (e) {
       throw gatewayError(e, locale)
     }

@@ -56,6 +56,7 @@ const EXPECTED_TOOLS = [
   'sandbox-logs',
   // sandbox execution (easyworker)
   'sandbox-checkout',
+  'sandbox-submit-mr',
   'sandbox-file-download',
   'sandbox-file-edit',
   'sandbox-exec',
@@ -67,14 +68,11 @@ const EXPECTED_TOOLS = [
   'sandbox-job-start',
   'sandbox-job-wait',
   'sandbox-file-ls',
-  'sandbox-port',
   'sandbox-file-read',
   'sandbox-file-rm',
   'sandbox-file-upload',
   'sandbox-file-write',
   // repo-*
-  'repo-branch-create',
-  'repo-branch-sync',
   'repo-branches',
   'repo-build-image',
   'repo-build-preview',
@@ -95,12 +93,9 @@ const EXPECTED_TOOLS = [
   'helm-uninstall',
   'helm-promote',
   'helm-rollback-release',
-  'repo-commit',
   'repo-create-org',
   'repo-create-repo',
-  'repo-file-delete',
   'repo-diff',
-  'repo-file-edit',
   'repo-delete-push-mirror',
   'repo-explore',
   'repo-import',
@@ -109,17 +104,15 @@ const EXPECTED_TOOLS = [
   'repo-log',
   'repo-mail-send',
   'repo-mr-comment',
-  'repo-mr-create',
   'repo-mr-list',
   'repo-mr-merge',
+  'repo-mr-close',
   'repo-file-read',
   'repo-remove',
-  'repo-file-restore',
   'repo-set-push-mirror',
   'repo-show',
   'repo-tag-create',
   'repo-tags',
-  'repo-file-write',
 ].sort()
 
 describe('workspace extension registration', () => {
@@ -169,9 +162,9 @@ describe('workspace extension registration', () => {
     expect(names).toEqual(EXPECTED_TOOLS)
 
     // Per-tool gating: sandbox-* and repo-* both need the gateway; the bridge
-    // needs it too (repo checkout/port now go through the gateway).
+    // needs it too (repo checkout/submit now go through the gateway).
     for (const t of manifest?.tools ?? []) {
-      const expected = t.name === 'sandbox-checkout' || t.name === 'sandbox-port'
+      const expected = t.name === 'sandbox-checkout' || t.name === 'sandbox-submit-mr'
         ? BRIDGE_REQUIRED
         : t.name === 'repo-build-image'
           ? BUILD_REQUIRED
@@ -194,7 +187,7 @@ describe('workspace extension registration', () => {
 
     // Execution tools carry a required worker-name; lifecycle tools do not.
     const byName = new Map((manifest?.tools ?? []).map(t => [t.name, t]))
-    for (const exec of ['sandbox-exec', 'sandbox-file-read', 'sandbox-checkout', 'sandbox-port']) {
+    for (const exec of ['sandbox-exec', 'sandbox-file-read', 'sandbox-checkout', 'sandbox-submit-mr']) {
       expect(byName.get(exec)?.input_schema?.required, exec).toContain('worker-name')
     }
     for (const life of ['sandbox-create', 'sandbox-list']) {

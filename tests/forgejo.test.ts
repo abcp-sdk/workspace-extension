@@ -21,10 +21,9 @@ function fakeGateway(overrides: Partial<Record<string, unknown>> = {}) {
     tags: { tags: [{ name: 'v1', sha: 't1' }] },
     contents: { isDir: false, text: 'hello\n', sha: 'deadbeef', size: 6n, entries: [] },
     readRaw: { data: new Uint8Array([1, 2, 3]) },
-    commitFiles: { sha: 'c0ffee' },
-    applyFiles: { sha: 'c0ffee' },
-    commitStaged: { sha: 'c0ffee' },
+    submitMR: { index: 7, url: 'http://x/mr/7', head: 'mr/o-r-main-1' },
     branchStatus: { placeholder: true, staged: false, tip: 't', mergeTip: 'p' },
+    tree: { entries: [{ path: 'a.txt', type: 'file', size: 3n }, { path: 'dir', type: 'dir', size: 0n }], truncated: false },
     log: { commits: [{ sha: 'c1', message: 'hi', author: 'A', date: '2026-01-01' }] },
     getCommit: { commit: { sha: 'c1', message: 'm', author: 'A', date: 'd', parents: ['p'] } },
     commitDiff: { diff: 'DIFF' },
@@ -82,33 +81,32 @@ describe('Forgejo (gateway-backed)', () => {
     if (got.kind === 'dir') expect(got.entries.map(e => e.type)).toEqual(['file', 'dir'])
   })
 
-  it('sends putFile through applyFiles (staging) with content + sha', async () => {
+  it('submits an MR through submitMR (base + files)', async () => {
     const { gateway, calls } = fakeGateway()
     const fj = new Forgejo({ gateway })
-    const res = await fj.putFile('o', 'r', 'a.txt', 'hi', 'msg', { ref: 'main', sha: 'base' })
-    expect(res.sha).toBe('c0ffee')
-    const req = calls[0]!.req as { branch: string; files: Array<Record<string, unknown>> }
-    expect(req.branch).toBe('main')
-    expect(calls[0]!.method).toBe('applyFiles')
-    expect(req.files[0]).toMatchObject({ operation: 'update', path: 'a.txt' })
+    const res = await fj.submitMR('o', 'r', 'main', 'title', 'body', [
+      { path: 'a.txt', operation: 'update', content: 'hi' },
+    ])
+    expect(res).toEqual({ index: 7, url: 'http://x/mr/7', head: 'mr/o-r-main-1' })
+    expect(calls[0]!.method).toBe('submitMR')
+    expect(calls[0]!.req).toMatchObject({ org: 'o', repo: 'r', base: 'main', title: 'title' })
+    const files = (calls[0]!.req as { files: Array<Record<string, unknown>> }).files
+    expect(files[0]).toMatchObject({ path: 'a.txt', operation: 'update', content: 'hi' })
   })
 
-  it('finalizes staging through commitStaged(message)', async () => {
-    const { gateway, calls } = fakeGateway()
+  it('lists the file paths of a tree (files only)', async () => {
+    const { gateway } = fakeGateway()
     const fj = new Forgejo({ gateway })
-    const res = await fj.commitStaged('o', 'r', 'feat/x', 'my message')
-    expect(res.sha).toBe('c0ffee')
-    expect(calls[0]!.method).toBe('commitStaged')
-    expect(calls[0]!.req).toMatchObject({ org: 'o', repo: 'r', branch: 'feat/x', message: 'my message' })
+    const paths = await fj.listTree('o', 'r', 'main')
+    expect([...paths]).toEqual(['a.txt'])
   })
 
-  it('creates without a sha and deletes without content', async () => {
-    const { gateway, calls } = fakeGateway()
+  it('merges and closes through the gateway', async () => {
+    const { gateway, calls } = fakeGateway({ mergeMR: { ok: true }, closeMR: { ok: true } })
     const fj = new Forgejo({ gateway })
-    await fj.putFile('o', 'r', 'new.txt', 'hi', 'msg')
-    expect((calls[0]!.req as { files: Array<Record<string, unknown>> }).files[0]).toMatchObject({ operation: 'create', path: 'new.txt' })
-    await fj.deleteFile('o', 'r', 'gone.txt', 'bye')
-    expect((calls[1]!.req as { files: Array<Record<string, unknown>> }).files[0]).toMatchObject({ operation: 'delete', path: 'gone.txt' })
+    await fj.mergeMR('o', 'r', 3)
+    await fj.closeMR('o', 'r', 4)
+    expect(calls.map(c => c.method)).toEqual(['mergeMR', 'closeMR'])
   })
 
   it('maps commit history and single commit', async () => {

@@ -6,11 +6,13 @@ A standalone abc-protocol **extension server** with three surfaces:
   demand via the [**worker-manager**](../worker-manager) service (Connect RPC).
 - **`sandbox-*` execution** — run commands and read/write files in a named
   sandbox (direct Connect RPC over `worker.v1.WorkerService`).
-- **`repo-*`** — read and commit files in a **Forgejo** repository (direct
-  REST), with branches, tags, history, diffs and pull requests.
-- **`sandbox-checkout` / `sandbox-port`** — move a repository tree into a
-  sandbox and commit sandbox changes back. This is the "worker is scratch, the
-  repo is the durable workspace" model.
+- **`repo-*`** — read a **Forgejo** repository (via the workspace gateway), with
+  branches, tags, history, diffs and pull requests.
+- **`sandbox-checkout` / `sandbox-submit-mr`** — check a repository tree into a
+  sandbox, edit it there, and submit the changes as a change request. This is the
+  ONLY way branch content changes: there is no tool that writes a branch
+  directly. Edits happen in a sandbox; the gateway materializes the diff onto an
+  immutable `mr/...` head branch and opens the MR.
 
 Unlike easylab's `ops-extension` / `repo-extension` (which go through the
 easylab gateway), this extension is a deliberately small **direct client**.
@@ -98,27 +100,24 @@ takes a required **`worker-name`**.
 | `sandbox-download` | agent `file:<code>` → workspace path |
 | `sandbox-upload` | workspace path → agent `file:<code>` (agent derives the MIME) |
 | `sandbox-checkout` | Forgejo archive(`.tar.gz`) → worker `SyncFolder`; `clean=false` (default) keeps sandbox-only files |
-| `sandbox-port` | sandbox file/dir → Forgejo commit; a directory is ported as **new files only** (refused if any target exists) |
+| `sandbox-submit-mr` | diff the sandbox repo dir (`path`) vs `base` and submit the change set as an MR — the ONLY write path; the gateway materializes it onto a new immutable `mr/...` head |
 
 ### repo-* (Forgejo)
 
-Every `repo-*` tool requires `forgejo-url`; auth is `forgejo-token` (PAT), or
-`forgejo-user` + `forgejo-password`. Address args: `org`, `repo`, and optional
-`ref` (branch / sha / tag; omitted = the repository default branch).
+Every `repo-*` tool requires `gateway-url`/`gateway-token` (the gateway owns the
+Forgejo credentials). Address args: `org`, `repo`, and optional `ref` (branch /
+sha / tag; omitted = the repository default branch).
 
-**Content**
+**Content (read-only + MR)**
 
 | Tool | Notes |
 |---|---|
 | `repo-explore` | list orgs, or an org's repos + branches (private included); optional `keyword` |
-| `repo-create-org` | create an organization (needs a credential allowed to create orgs) |
+| `repo-create-org` | create an organization |
 | `repo-create-repo` | create a repository under an org or user; optional `auto-init` + `default-branch` |
-| `repo-read` | line-numbered text window |
-| `repo-write` | create/overwrite one file (one commit), optimistic lock by blob sha |
-| `repo-edit` | anchor-line edit (one commit): `start-anchor-line`/`end-anchor-line` bracket the replaced region and `start-anchor`/`end-anchor` are their current text (verified); unified diff |
-| `repo-delete` | delete one file (one commit) |
-| `repo-list` | list a directory (or a file) at a ref |
-| `repo-commit` | commit several files **atomically** (create/update/delete), optional `new-branch` |
+| `repo-file-read` | line-numbered text window |
+| `repo-file-list` | list a directory (or a file) at a ref |
+| `sandbox-submit-mr` | the only way to change a branch: submits the sandbox diff as an MR |
 
 **History / refs / collaboration**
 
@@ -127,9 +126,10 @@ Every `repo-*` tool requires `forgejo-url`; auth is `forgejo-token` (PAT), or
 | `repo-log` | commit history (optional `path`/`ref` filter) |
 | `repo-show` | one commit's metadata + patch |
 | `repo-diff` | compare two refs (`base...head`) |
-| `repo-branches` / `repo-branch-create` | list / create branches |
+| `repo-branches` | list branches |
 | `repo-tags` / `repo-tag-create` | list / create tags |
-| `repo-mr-create` / `repo-mr-list` / `repo-mr-comment` / `repo-mr-merge` | pull requests |
+| `repo-mr-list` / `repo-mr-comment` / `repo-mr-merge` / `repo-mr-close` | pull requests; merge/close allowed ONLY when the MR's `base` is your own branch |
+| `repo-mail-send` | message any real branch session (peers; cross-repo allowed; never an `mr/...` branch) |
 
 ## Anchor-line edit
 

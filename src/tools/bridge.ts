@@ -4,8 +4,6 @@ import type { WorkerClient } from '../client.js'
 import type { Forgejo, CommitFile } from '../forgejo.js'
 import { tr } from '../i18n.js'
 import { strArg } from './shared.js'
-import { unifiedDiff } from './diff.js'
-import { capLines, truncationNote } from './output.js'
 
 /** Context for the repo↔sandbox bridge tools. */
 export interface BridgeCtx {
@@ -14,7 +12,7 @@ export interface BridgeCtx {
   locale: string
   /** The session's own branch (`org:repo:branch`), used as the default target. */
   branch?: string
-  /** Fan the ported commit out to the session's other sandboxes (optional). */
+  /** Fan a merged base branch out to the session's other sandboxes (optional). */
   fanout?: (org: string, repo: string, branch: string, newRev: string) => Promise<number>
 }
 
@@ -38,7 +36,9 @@ function refOf(args: Record<string, unknown>, locale: string): RepoRef {
  * `sandbox-checkout`: download the repo tree at `ref` as tar.gz and unpack it
  * into the sandbox workspace. `clean:false` keeps sandbox-only files and only
  * replaces files present in the archive (matching the worker's per-entry
- * overwrite). `dest` defaults to the workspace root.
+ * overwrite). `dest` defaults to the workspace root. The archive carries the
+ * repository's top-level directory, so omitting `dest` checks the repo out into
+ * `<workspace>/<repo>/`.
  */
 export async function sandboxCheckout(
   ctx: BridgeCtx,
@@ -65,25 +65,14 @@ export async function sandboxCheckout(
   }
 }
 
-/** A file to port: repo-relative path + content.
- *
- * `content` is used when the bytes are VALID UTF-8 (the string round-trips to
- * the identical bytes); `contentBytes` carries RAW bytes for everything else.
- * NEVER lossily decode a binary: `TextDecoder().decode` replaces each invalid
- * byte with U+FFFD (EF BF BD), which corrupts the file (and changes its hash). */
-interface PortedFile {
+/** A file read from the sandbox: repo-relative path + raw bytes. */
+interface SandboxFile {
   path: string
-  content?: string
-  contentBytes?: Uint8Array
+  bytes: Uint8Array
 }
 
-/**
- * Build a ported file from raw sandbox bytes, choosing the byte-exact
- * representation: a full fatal UTF-8 decode succeeds → string; any invalid
- * byte → raw bytes. A valid UTF-8 file (even one containing NULs) decodes and
- * re-encodes losslessly, so text stays text and binary stays binary.
- */
-function portedFile(path: string, bytes: Uint8Array): PortedFile {
+/** Build a CommitFile from raw bytes, choosing text vs binary representation. */
+function toCommitFile(path: string, bytes: Uint8Array): CommitFile {
   try {
     return { path, content: new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
   } catch {
@@ -92,151 +81,99 @@ function portedFile(path: string, bytes: Uint8Array): PortedFile {
 }
 
 /**
- * `sandbox-port`: commit sandbox file(s) back to the repository. A single file
- * is overwritten (update). A directory is ported as NEW files only — if ANY file
- * in the directory already exists in the repo, the whole port is refused (no
- * directory overwrite).
+ * `sandbox-submit-mr`: the ONLY way branch content changes. It diffs the
+ * sandbox's repo directory (`path`) against `base` and submits the change set
+ * as an MR: the gateway materializes it onto a new immutable `mr/...` head
+ * branch and opens the MR into `base`.
  *
- * `repo-path` is REQUIRED: the destination path inside the repository (relative
- * to the repo root). It is never inferred from the sandbox path, because a
- * sandbox usually holds the repo under a `<repo>/` subdirectory — defaulting to
- * the sandbox path would write `easyvcs/...` instead of the intended root path.
+ * `base` and `path` are REQUIRED. `path` is the repo directory in the sandbox
+ * (e.g. `myapp`); only files under it are considered, so unrelated sandbox
+ * scratch files never leak into the change set. A file present in `base` but
+ * absent in the sandbox is submitted as a DELETE.
  */
-export async function sandboxPort(
+export async function sandboxSubmitMR(
   ctx: BridgeCtx,
   args: Record<string, unknown>,
 ): Promise<ToolResultData> {
-  const rawRef = refOf(args, ctx.locale)
-  const sandboxPath = strArg(args, 'path')
-  if (sandboxPath === '') {
+  const r = refOf(args, ctx.locale)
+  const base = strArg(args, 'base')
+  const dir = strArg(args, 'path')
+  if (base === '') {
+    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'base' }))
+  }
+  if (dir === '') {
     throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'path' }))
   }
-  const repoPath = strArg(args, 'repo-path')
-  if (repoPath === '') {
-    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'repo-path' }))
-  }
-  // A port needs a concrete branch; an empty ref falls back to the session's
-  // own branch, else the repo default.
-  const r: RepoRef = {
-    ...rawRef,
-    ref:
-      rawRef.ref !== ''
-        ? rawRef.ref
-        : (ctx.branch ?? '') !== ''
-          ? ctx.branch!
-          : await ctx.forgejo.resolveRef(rawRef.org, rawRef.repo, '', ctx.locale),
-  }
+  const title = strArg(args, 'title')
+  const body = strArg(args, 'body')
 
-  // Is the sandbox path a directory?
-  const stat = await ctx.client.fileList({ path: sandboxPath })
-  let files: PortedFile[]
-  if (stat.isDir) {
-    files = await collectDir(ctx.client, sandboxPath, repoPath)
-  } else {
-    const data = await ctx.client.fileRead({ path: sandboxPath })
-    files = [portedFile(repoPath, data.content)]
+  // 1. Read the sandbox repo directory into repo-relative files.
+  const sandbox = await collectDir(ctx.client, dir, '')
+  if (sandbox.length === 0) {
+    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'submitNoFiles', { path: dir }))
+  }
+  const sandboxByPath = new Map(sandbox.map(f => [f.path, f.bytes]))
+
+  // 2. Read the base tree (repo-relative paths).
+  const basePaths = await ctx.forgejo.listTree(r.org, r.repo, base, ctx.locale)
+
+  // 3. Build the change set: added/changed files + deletions.
+  const files: CommitFile[] = []
+  for (const f of sandbox) {
+    const inBase = basePaths.has(f.path)
+    if (!inBase) {
+      files.push({ ...toCommitFile(f.path, f.bytes), operation: 'create' })
+      continue
+    }
+    // Compare content; skip unchanged to keep the MR minimal.
+    const cur = await ctx.forgejo.getRaw(r.org, r.repo, f.path, base, ctx.locale)
+    if (!bytesEqual(cur, f.bytes)) {
+      files.push({ ...toCommitFile(f.path, f.bytes), operation: 'update' })
+    }
+  }
+  for (const p of basePaths) {
+    if (!sandboxByPath.has(p)) files.push({ path: p, operation: 'delete' })
   }
   if (files.length === 0) {
-    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'portNoFiles', { path: sandboxPath }))
+    return { content: tr(ctx.locale, 'submitNoChanges', { org: r.org, repo: r.repo, base }) }
   }
 
-  // Directory port: refuse if ANY target path already exists (no overwrite).
-  if (stat.isDir) {
-    const existing: string[] = []
-    for (const f of files) {
-      try {
-        const cur = await ctx.forgejo.getContents(r.org, r.repo, f.path, r.ref, ctx.locale)
-        if (cur.kind === 'file') existing.push(f.path)
-      } catch {
-        // absent -> fine
-      }
-    }
-    if (existing.length > 0) {
-      throw new TypedToolError(
-        'invalid_argument',
-        tr(ctx.locale, 'portRefusedExists', {
-          count: existing.length,
-          org: r.org,
-          repo: r.repo,
-          ref: r.ref || 'HEAD',
-          paths: existing.slice(0, 20).join(', '),
-        }),
-      )
-    }
-  }
-
-  // Pre-image for the diff (best-effort): a single-file port OVERWRITES the
-  // target, so diff against its current text; a directory port only creates
-  // NEW files, so diff against empty.
-  const before = new Map<string, string>()
-  if (!stat.isDir) {
-    try {
-      const cur = await ctx.forgejo.getContents(r.org, r.repo, repoPath, r.ref, ctx.locale)
-      if (cur.kind === 'file') before.set(repoPath, cur.text)
-    } catch {
-      // absent -> new file
-    }
-  }
-
-  const commitFiles: CommitFile[] = files.map(f => ({
-    path: f.path,
-    operation: stat.isDir ? 'create' : 'update',
-    ...(f.content !== undefined ? { content: f.content } : {}),
-    ...(f.contentBytes !== undefined ? { contentBytes: f.contentBytes } : {}),
-  }))
-  const res = await ctx.forgejo.applyFiles(r.org, r.repo, commitFiles, {
-    ref: r.ref,
-    locale: ctx.locale,
-  })
-  const fanned = ctx.fanout !== undefined ? await ctx.fanout(r.org, r.repo, r.ref, res.sha) : 0
-  const note = fanned > 0 ? `\n${tr(ctx.locale, 'fanoutUpdated', { count: fanned })}` : ''
-
-  // Unified diff over the ported TEXT files (binary files are listed but not
-  // diffed). Mirrors repo-file-write/edit so the card renders a diff body.
-  let added = 0
-  let removed = 0
-  const chunks: string[] = []
-  for (const f of files) {
-    if (f.content === undefined) continue // binary: no textual diff
-    const d = unifiedDiff(before.get(f.path) ?? '', f.content, f.path)
-    if (d.text === '') continue
-    added += d.added
-    removed += d.removed
-    chunks.push(d.text)
-  }
-  const diffText = chunks.join('\n')
-  const summary = tr(ctx.locale, 'portDone', {
-    count: files.length, org: r.org, repo: r.repo, ref: r.ref || 'HEAD', sha: short(res.sha),
-  })
-  const capped = capLines(diffText.split('\n'))
-  const body = capped.kept.join('\n') + (capped.truncated ? truncationNote(capped, capped.kept.length, diffText.split('\n').length, ctx.locale) : '')
+  // 4. Submit (gateway creates the immutable mr/... head and opens the MR).
+  const res = await ctx.forgejo.submitMR(
+    r.org, r.repo, base, title, body, files, ctx.locale,
+  )
   return {
-    content: (body === '' ? summary : `${summary}\n\n${body}`) + note,
-    data: { org: r.org, repo: r.repo, ref: r.ref, commit: res.sha, count: files.length, paths: files.map(f => f.path), added, removed, diff: diffText, fanned },
+    content: tr(ctx.locale, 'submitDone', {
+      index: res.index, org: r.org, repo: r.repo, base, head: res.head, count: files.length,
+    }),
+    data: { org: r.org, repo: r.repo, base, head: res.head, index: res.index, url: res.url, files: files.map(f => f.path) },
   }
 }
 
-/** Recursively read a sandbox directory into repo-relative text files. */
-async function collectDir(client: WorkerClient, sandboxDir: string, repoDir: string): Promise<PortedFile[]> {
-  const out: PortedFile[] = []
-  const res = await client.fileList({ path: sandboxDir })
-  if (!res.isDir) {
-    const data = await client.fileRead({ path: sandboxDir })
-    return [portedFile(repoDir, data.content)]
-  }
+/** Byte equality for two Uint8Arrays (length then element-wise). */
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
+/**
+ * Read a sandbox directory into repo-relative files. `sandboxDir` is the repo
+ * directory inside the workspace; `repoDir` is the repo-relative prefix the
+ * files are given (here always ''). One recursive `fileList` (server-side depth)
+ * replaces a round-trip per directory.
+ */
+async function collectDir(client: WorkerClient, sandboxDir: string, repoDir: string): Promise<SandboxFile[]> {
+  const root = sandboxDir.replace(/\/+$/, '')
+  const res = await client.fileList({ path: root, depth: 1000, limit: 10000 })
+  const out: SandboxFile[] = []
   for (const entry of res.files) {
-    const name = entry.path.split('/').pop() ?? entry.path
-    const repoChild = repoDir.replace(/\/+$/, '') === '' ? name : `${repoDir.replace(/\/+$/, '')}/${name}`
-    if (entry.isDir) {
-      out.push(...(await collectDir(client, entry.path, repoChild)))
-    } else {
-      const data = await client.fileRead({ path: entry.path })
-      out.push(portedFile(repoChild, data.content))
-    }
+    if (entry.isDir) continue
+    let rel = entry.path
+    if (rel === root || rel.startsWith(`${root}/`)) rel = rel.slice(root.length + 1)
+    if (rel === '' || rel === root) continue
+    const data = await client.fileRead({ path: entry.path })
+    out.push({ path: repoDir === '' ? rel : `${repoDir}/${rel}`, bytes: data.content })
   }
   return out
-}
-
-function short(sha: string): string {
-  return sha.length > 8 ? sha.slice(0, 8) : sha
 }

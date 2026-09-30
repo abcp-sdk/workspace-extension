@@ -56,7 +56,7 @@ describe('repo-mail-send', () => {
     expect(published).toEqual([])
   })
 
-  it('lets a maintainer message any branch of its OWN repo', async () => {
+  it('lets a session message any branch of its OWN repo', async () => {
     const { c, ensured, published } = ctx(['main', 'feature/x'])
     const res = await repoMailSend(c, { org: 'acme', repo: 'web', branch: 'feature/x', text: 'do it' })
     expect(ensured).toEqual([{ org: 'acme', repo: 'web', branch: 'feature/x' }])
@@ -66,7 +66,7 @@ describe('repo-mail-send', () => {
     expect(res.data).toMatchObject({ session: 'acme:web:feature/x' })
   })
 
-  it('lets a developer message its own repo main (default branch)', async () => {
+  it('lets a feature-branch session message its own repo main (default branch)', async () => {
     const { c, ensured, published } = ctx(['main'], 'acme:web:feature/x')
     await repoMailSend(c, { org: 'acme', repo: 'web', text: 'hello' })
     expect(ensured).toEqual([{ org: 'acme', repo: 'web', branch: 'main' }])
@@ -74,35 +74,18 @@ describe('repo-mail-send', () => {
     expect(published[0]?.source).toBe('session:acme:web:feature/x')
   })
 
-  it('refuses a developer messaging a non-main branch', async () => {
-    const { c, ensured, published } = ctx(['main', 'feature/y'], 'acme:web:feature/x')
-    await expect(
-      repoMailSend(c, { org: 'acme', repo: 'web', branch: 'feature/y', text: 'hi' }),
-    ).rejects.toThrow(/main/)
+  it('allows cross-repo messaging to any real branch (peers)', async () => {
+    const { c, ensured, published } = ctx(['main', 'feature/x'])
+    await repoMailSend(c, { org: 'other', repo: 'lib', branch: 'feature/x', text: 'hi' })
+    expect(ensured).toEqual([{ org: 'other', repo: 'lib', branch: 'feature/x' }])
+    expect(published[0]?.session).toBe('other:lib:feature/x')
+  })
+
+  it('refuses messaging an mr/... branch', async () => {
+    const { c, ensured, published } = ctx(['main', 'mr/o-r-main-1'], 'acme:web:main')
+    const err = await repoMailSend(c, { org: 'acme', repo: 'web', branch: 'mr/o-r-main-1', text: 'x' }).catch(e => e)
+    expect((err as { code?: string }).code).toBe('invalid_argument')
     expect(ensured).toEqual([])
-    expect(published).toEqual([])
-  })
-
-  it('refuses cross-repo messaging to a non-main branch', async () => {
-    const { c, published } = ctx(['main', 'feature/x'])
-    await expect(
-      repoMailSend(c, { org: 'other', repo: 'lib', branch: 'feature/x', text: 'hi' }),
-    ).rejects.toThrow(/cross-repository/)
-    expect(published).toEqual([])
-  })
-
-  it('lets a maintainer message another repo main (peer coordination)', async () => {
-    const { c, ensured, published } = ctx(['main'])
-    await repoMailSend(c, { org: 'other', repo: 'lib', text: 'ping' })
-    expect(ensured).toEqual([{ org: 'other', repo: 'lib', branch: 'main' }])
-    expect(published[0]?.session).toBe('other:lib:main')
-  })
-
-  it('refuses a developer messaging another repo', async () => {
-    const { c, published } = ctx(['main'], 'acme:web:feature/x')
-    await expect(
-      repoMailSend(c, { org: 'other', repo: 'lib', text: 'hi' }),
-    ).rejects.toThrow(/main/)
     expect(published).toEqual([])
   })
 
