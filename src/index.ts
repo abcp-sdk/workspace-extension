@@ -115,7 +115,7 @@ import {
 } from './tools/helm.js'
 
 export const EXT_ID = 'workspace'
-export const EXT_VERSION = '0.14.1'
+export const EXT_VERSION = '0.15.0'
 
 /** Config names (re-exported for tests). */
 export const CONFIG_MANAGER_URL = CONFIG.gatewayUrl
@@ -138,7 +138,7 @@ export interface WorkspaceExtensionOpts {
 
 /**
  * Build the workspace extension: sandbox lifecycle (workspace gateway), sandbox
- * execution (easyworker), repo-* tools (Forgejo) and the checkout/port bridge.
+ * execution (agent-worker), repo-* tools (Forgejo) and the checkout/port bridge.
  * Config is resolved per call.
  *
  * `bus` is only needed for the agent file RPCs (sandbox-file-download/upload).
@@ -450,7 +450,7 @@ export function createWorkspaceConfig(
     'sandbox-status': sandboxWrap(sandboxStatus),
     'sandbox-delete': sandboxWrap(sandboxDelete),
 
-    // ---- sandbox execution (easyworker) ----
+    // ---- sandbox execution (agent-worker) ----
     'sandbox-info': wrap(async ({ client, url, locale }) => {
       const rendered = renderInfo(locale, await client.info({}), domainOf(url))
       return { content: rendered.text, data: rendered.data }

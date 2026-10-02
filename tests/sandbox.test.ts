@@ -173,3 +173,74 @@ describe('sandbox-delete', () => {
     expect(r.data).toMatchObject({ name: 'w1', deleted: true })
   })
 })
+
+describe('sandbox-info capabilities', () => {
+  it('renders probed capabilities (desktop/noVNC/a11y/distro) when reported', async () => {
+    const client = fakeWorker({
+      info: async () => ({
+        os: 'linux',
+        arch: 'amd64',
+        shell: 'builtin(mvdan-sh)',
+        workspace: '/root/workspace',
+        home: '/root',
+        bootId: 'abc123',
+        capabilities: {
+          desktop: true,
+          display: 'x11',
+          novnc: true,
+          novncPort: 6080,
+          xa11y: true,
+          distro: 'debian',
+        },
+      }),
+    })
+    const c: SandboxCtx = {
+      workspace: fakeManager(),
+      locale: 'en',
+      resolveWorker: async () => ({ client, url: 'http://wm-w1.worker.svc.cluster.local:48080' }),
+    }
+    const r = await sandboxCreate(c, { name: 'w1', image: 'img' })
+    expect(r.content).toContain('capabilities:')
+    expect(r.content).toContain('desktop(x11)')
+    expect(r.content).toContain('noVNC:6080')
+    expect(r.content).toContain('a11y')
+    expect(r.content).toContain('distro:debian')
+    expect(r.data).toMatchObject({
+      capabilities: { desktop: true, xa11y: true, novncPort: 6080, distro: 'debian' },
+    })
+  })
+
+  it('reports "none detected" for a plain sandbox', async () => {
+    const client = fakeWorker({
+      info: async () => ({
+        os: 'linux',
+        arch: 'amd64',
+        shell: 'builtin(mvdan-sh)',
+        workspace: '/root/workspace',
+        home: '/root',
+        bootId: 'abc123',
+        capabilities: { desktop: false, display: '', novnc: false, novncPort: 0, xa11y: false, distro: 'debian' },
+      }),
+    })
+    const c: SandboxCtx = {
+      workspace: fakeManager(),
+      locale: 'en',
+      resolveWorker: async () => ({ client, url: 'http://wm-w1.worker.svc.cluster.local:48080' }),
+    }
+    const r = await sandboxCreate(c, { name: 'w1', image: 'img' })
+    expect(r.content).toContain('distro:debian')
+    expect(r.content).not.toContain('a11y')
+    expect(r.content).not.toContain('desktop(')
+  })
+
+  it('omits the capabilities line when the worker reports none (older worker)', async () => {
+    const c: SandboxCtx = {
+      workspace: fakeManager(),
+      locale: 'en',
+      resolveWorker: async () => ({ client: fakeWorker(), url: 'http://wm-w1.worker.svc.cluster.local:48080' }),
+    }
+    const r = await sandboxCreate(c, { name: 'w1', image: 'img' })
+    expect(r.content).not.toContain('capabilities:')
+    expect(r.data['capabilities']).toBeUndefined()
+  })
+})

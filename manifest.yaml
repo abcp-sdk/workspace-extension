@@ -2,7 +2,7 @@
 # schemas, required_config). Handlers (execute) live in src/index.ts; the SDK's
 # parseManifest/manifestConfig joins the two, exactly like the other extensions.
 id: workspace
-version: 0.14.1
+version: 0.15.0
 tools:
   - name: sandbox-create
     description: 'Create a sandbox and wait up to 60s for it to become healthy. A sandbox runs a PRE-BUILT image that already bundles the worker — the gateway no longer injects anything. `image` must be one of the deployment sandbox images from the dedicated sandbox org (see list-oci-images with owner="sandbox"); omit it for the deployment default. A name is never reused: if a sandbox with this name already exists the call is refused — delete it first with sandbox-delete. Returns the sandbox name, its in-cluster service DNS, and the worker environment (OS/arch, workspace root, boot id).'
@@ -120,9 +120,9 @@ tools:
       - gateway-url
       - gateway-token
   - name: sandbox-info
-    description: "Show the sandbox environment: OS/arch, shell, workspace root, home dir (`~`), in-cluster service DNS and boot id. File tools accept a leading `~` as an alias for this home dir."
+    description: "Show the sandbox environment: OS/arch, shell, workspace root, home dir (`~`), in-cluster service DNS, boot id and the image's probed CAPABILITIES (desktop/display, noVNC, accessibility `xa11y`, distro). File tools accept a leading `~` as an alias for this home dir. Capabilities are best-effort: a capability missing here means 'not detected', not 'impossible'."
     descriptions:
-      zh: 查看沙箱环境：OS/架构、shell、工作区根目录、主目录（`~`）、集群内服务域名与 boot id。文件工具的 `~` 前缀即指该主目录。
+      zh: 查看沙箱环境：OS/架构、shell、工作区根目录、主目录（`~`）、集群内服务域名、boot id，以及镜像探测到的能力（桌面/显示协议、noVNC、无障碍 `xa11y`、发行版）。文件工具的 `~` 前缀即指该主目录。能力为尽力探测：未列出表示"未检测到"，而非"不可能"。
     input_schema:
       type: object
       properties:
@@ -907,9 +907,9 @@ tools:
       - gateway-url
       - gateway-token
   - name: repo-build-image
-    description: "Build a container image from a repository Dockerfile (context = a repo subdirectory) and push it to the deployment registry. IMPORTANT: the produced image does NOT get easyworker injected — the Dockerfile must FROM a worker-capable base image for the result to be usable as a sandbox. The result is not auto-added to the sandbox image catalog."
+    description: "Build a container image from a repository Dockerfile (context = a repo subdirectory) and push it to the deployment registry. IMPORTANT: the produced image does NOT get agent-worker injected — the Dockerfile must FROM a worker-bundled base image (built by `abc-protocol/worker`'s `sandbox-images/build.sh`) for the result to be usable as a sandbox. The result is not auto-added to the sandbox image catalog."
     descriptions:
-      zh: 从仓库的 Dockerfile 构建容器镜像（上下文 = 仓库子目录）并推送到部署 registry。重要：产出的镜像不会注入 easyworker——Dockerfile 必须 FROM 一个含 worker 的基础镜像，产物才能作为沙箱使用。产物不会自动加入沙箱镜像目录。
+      zh: 从仓库的 Dockerfile 构建容器镜像（上下文 = 仓库子目录）并推送到部署 registry。重要：产出的镜像不会注入 agent-worker——Dockerfile 必须 FROM 一个已内置 worker 的基础镜像（由 `abc-protocol/worker` 的 `sandbox-images/build.sh` 构建），产物才能作为沙箱使用。产物不会自动加入沙箱镜像目录。
     input_schema:
       type: object
       properties:

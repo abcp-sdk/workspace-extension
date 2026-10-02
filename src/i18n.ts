@@ -18,8 +18,8 @@ import type { WorkspaceDeps } from './deps.js'
 export const CATALOG = {
   // ---- info ----
   infoHeader: {
-    en: 'easyworker {os}/{arch} (shell {shell})',
-    zh: 'easyworker {os}/{arch}（shell {shell}）',
+    en: 'sandbox {os}/{arch} (shell {shell})',
+    zh: '沙箱 {os}/{arch}（shell {shell}）',
   },
   infoWorkspace: {
     en: 'workspace: {path}',
@@ -36,6 +36,31 @@ export const CATALOG = {
   infoBoot: {
     en: 'boot_id: {id}',
     zh: 'boot_id：{id}',
+  },
+  // What the sandbox IMAGE can do (worker Capabilities, probed at request time).
+  infoCapabilities: {
+    en: 'capabilities: {caps}',
+    zh: '能力：{caps}',
+  },
+  infoCapsNone: {
+    en: 'none detected',
+    zh: '未检测到',
+  },
+  infoCapsDesktop: {
+    en: 'desktop({display})',
+    zh: '桌面({display})',
+  },
+  infoCapsNovnc: {
+    en: 'noVNC:{port}',
+    zh: 'noVNC:{port}',
+  },
+  infoCapsA11y: {
+    en: 'a11y',
+    zh: '无障碍',
+  },
+  infoCapsDistro: {
+    en: 'distro:{distro}',
+    zh: '发行版:{distro}',
   },
 
   // ---- exec / jobs ----
