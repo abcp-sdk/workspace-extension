@@ -69,6 +69,17 @@ const EXPECTED_TOOLS = [
   'sandbox-file-patch',
   'sandbox-file-read',
   'sandbox-file-upload',
+  // computer-use (GUI via the accessibility tree)
+  'sandbox-computer-apps',
+  'sandbox-computer-snapshot',
+  'sandbox-computer-find',
+  'sandbox-computer-action',
+  'sandbox-computer-click',
+  'sandbox-computer-type',
+  'sandbox-computer-key',
+  'sandbox-computer-scroll',
+  'sandbox-computer-drag',
+  'sandbox-computer-screenshot',
   // repo-*
   'repo-branches',
   'repo-build-image',

@@ -638,6 +638,56 @@ export const CATALOG = {
     en: 'Synced the change into {count} sandbox(es) owned by this session.',
     zh: '已把该改动同步到本会话拥有的 {count} 个沙箱。',
   },
+
+  // ---- computer-use (GUI via the accessibility tree) ----
+  a11yMissing: {
+    en: 'sandbox {sandbox} has no accessibility tooling (xa11y / adb), so the computer-use tools cannot drive its GUI. Use a GUI sandbox image (e.g. sandbox-desktop:openbox, sandbox-windows, sandbox-macos, sandbox-android); see sandbox-info `capabilities`.',
+    zh: '沙箱 {sandbox} 没有无障碍工具（xa11y / adb），computer-use 工具无法驱动其 GUI。请使用 GUI 沙箱镜像（如 sandbox-desktop:openbox、sandbox-windows、sandbox-macos、sandbox-android）；参见 sandbox-info 的 `capabilities`。',
+  },
+  noApps: {
+    en: 'No applications found.',
+    zh: '未找到应用。',
+  },
+  noMatches: {
+    en: 'no elements matched selector: {selector}',
+    zh: '没有元素匹配选择器：{selector}',
+  },
+  findByRefHint: {
+    en: 'Tip: call sandbox-computer-snapshot first to get element refs, or use a selector like button[name="OK"].',
+    zh: '提示：先调用 sandbox-computer-snapshot 获取元素 ref，或使用类似 button[name="OK"] 的选择器。',
+  },
+  actionDone: {
+    en: 'Performed {action} on {target}.',
+    zh: '已对 {target} 执行 {action}。',
+  },
+  clickedAt: {
+    en: 'Clicked at ({x},{y}).',
+    zh: '已在 ({x},{y}) 点击。',
+  },
+  typedText: {
+    en: 'Typed {count} character(s).',
+    zh: '已输入 {count} 个字符。',
+  },
+  pressedKey: {
+    en: 'Pressed {key}.',
+    zh: '已按下 {key}。',
+  },
+  scrolled: {
+    en: 'Scrolled at ({x},{y}) by ({dx},{dy}).',
+    zh: '已在 ({x},{y}) 滚动 ({dx},{dy})。',
+  },
+  dragged: {
+    en: 'Dragged ({fromX},{fromY}) -> ({toX},{toY}).',
+    zh: '已拖拽 ({fromX},{fromY}) -> ({toX},{toY})。',
+  },
+  screenshotStored: {
+    en: 'Screenshot stored as file:{code} ({width}x{height}).',
+    zh: '截图已存储为 file:{code}（{width}x{height}）。',
+  },
+  screenshotFailed: {
+    en: 'screenshot failed: {reason}',
+    zh: '截图失败：{reason}',
+  },
 } satisfies Catalog<string>
 
 export type MessageKey = keyof typeof CATALOG

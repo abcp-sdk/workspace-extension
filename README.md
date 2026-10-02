@@ -8,6 +8,9 @@ four surfaces:
   Kubernetes sandbox backend in-process.
 - **`sandbox-*` execution** — run commands and read/write files in a named
   sandbox (direct Connect RPC over `worker.v1.WorkerService`).
+- **`sandbox-computer-*`** — drive a **GUI** sandbox's native apps through the
+  platform accessibility tree (xa11y/AT-SPI2 on Linux, UI Automation on Windows,
+  AXUIElement on macOS; adb/uiautomator on Android). Requires a GUI image.
 - **`repo-*` / `service-*` / `helm-*` / `pvc-*`** — read a Forgejo repository,
   build images, and run long-lived workloads (services, Helm releases, PVCs) —
   all via the workspace gateway, which owns the credentials and enforces tenant
@@ -105,6 +108,23 @@ is an OPEN map: add a language by adding a column to each entry — no code chan
 | `sandbox-file-upload` | workspace path → agent `file:<code>` (agent derives the MIME) |
 | `sandbox-checkout` | Forgejo archive(`.tar.gz`) → worker `SyncFolder`; `clean=false` (default) keeps sandbox-only files |
 | `sandbox-submit-mr` | diff the sandbox repo dir (`path`) vs `base` and submit the change set as an MR — the ONLY write path; honors `.gitignore`, caps at 100 files / 10 MiB |
+
+### sandbox-computer-* (GUI, `worker-name` required)
+
+Drive a GUI sandbox's **native apps** through the platform accessibility tree —
+prefer these over pixel coordinates. They require a GUI image (see
+`sandbox-info` `capabilities`); on a plain `sandbox-<lang>` image the call fails
+with an actionable error.
+
+| Tool | Notes |
+|---|---|
+| `sandbox-computer-apps` | running apps whose a11y tree is visible (focused marked); Android = foreground package/activity |
+| `sandbox-computer-snapshot` | a11y tree of an app (or the whole desktop); each element gets a stable `ref` — **prefer over a screenshot to locate elements** |
+| `sandbox-computer-find` | match a CSS-like a11y selector; optional `center`/`bounds` output |
+| `sandbox-computer-action` | a11y action on a `ref`/selector (press/focus/toggle/select/expand/collapse/set-value/type-text/scroll-into-view) |
+| `sandbox-computer-click` / `-scroll` / `-drag` | coordinate input (fallback for canvas/unknown widgets) |
+| `sandbox-computer-type` / `-key` | keyboard input |
+| `sandbox-computer-screenshot` | PNG → `file:<code>` (use to SEE rendering, not to locate elements) |
 
 ### repo-* (Forgejo, via the gateway)
 

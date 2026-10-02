@@ -84,6 +84,26 @@ supported way to decide whether a sandbox can be driven graphically:
 "impossible". The `worker-extension` repo holds the reference `computer-*`
 implementation (`src/computer/`) if the GUI tools are ported here.
 
+### computer-use tools (`sandbox-computer-*`)
+
+Ported from `abc-protocol/worker-extension`'s `src/computer/` into
+`src/computer/{exec,platform,target,tools}.ts`. Differences from the source:
+
+- **Sandbox resolution** uses the gateway (`ResolveSandbox` via
+  `resolverFor(...).resolve(name)`), not a static `sandboxes` config list; every
+  tool takes `worker-name`.
+- **The a11y gate** prefers the worker's probed `capabilities.xa11y` (see
+  `probeTarget`): `xa11y=false` refuses IMMEDIATELY with no command run; an older
+  worker without capabilities falls back to a `command -v xa11y` probe. Android
+  is gated on `adb`.
+- Tool names are prefixed `sandbox-computer-*` (so they cannot collide with the
+  standalone `worker-extension`'s `computer-*`).
+
+The platform driver (`Xa11yPlatform`) is identical to the source: the xa11y CLI
+argument surface is the same on Linux/Windows/macOS, and `AndroidPlatform` uses
+`adb` + `uiautomator`. Screenshots are read back through the worker and ingested
+via the agent file RPC (`file:<code>`).
+
 ## Artifact package-source injection (gateway-owned)
 
 Sandboxes fetch packages from the in-cluster **artifact** registry instead of the

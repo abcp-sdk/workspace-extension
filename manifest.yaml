@@ -2,7 +2,7 @@
 # schemas, required_config). Handlers (execute) live in src/index.ts; the SDK's
 # parseManifest/manifestConfig joins the two, exactly like the other extensions.
 id: workspace
-version: 0.15.0
+version: 0.16.0
 tools:
   - name: sandbox-create
     description: 'Create a sandbox and wait up to 60s for it to become healthy. A sandbox runs a PRE-BUILT image that already bundles the worker — the gateway no longer injects anything. `image` must be one of the deployment sandbox images from the dedicated sandbox org (see list-oci-images with owner="sandbox"); omit it for the deployment default. A name is never reused: if a sandbox with this name already exists the call is refused — delete it first with sandbox-delete. Returns the sandbox name, its in-cluster service DNS, and the worker environment (OS/arch, workspace root, boot id).'
@@ -635,6 +635,338 @@ tools:
         - repo
         - base
         - path
+    required_config:
+      - gateway-url
+      - gateway-token
+    # ---- computer-use (GUI via the accessibility tree) ----------------------
+    # These drive a GUI sandbox's native apps through the platform accessibility
+    # tree (xa11y over AT-SPI2 on Linux, UI Automation on Windows, AXUIElement on
+    # macOS) or adb/uiautomator on Android. They require a GUI image (see
+    # sandbox-info `capabilities`: sandbox-desktop:openbox, sandbox-windows,
+    # sandbox-macos, sandbox-android); a plain sandbox-<lang> image has no a11y
+    # tooling and the call fails with an actionable error.
+  - name: sandbox-computer-apps
+    description: "List the running apps whose accessibility tree is visible (the focused one is marked). On Android this reports the foreground package/activity. Use sandbox-computer-snapshot to inspect an app's UI."
+    descriptions:
+      zh: 列出无障碍树可见的运行中应用（标记出聚焦的那个）。Android 上返回前台包名/Activity。用 sandbox-computer-snapshot 查看某个应用的 UI。
+    input_schema:
+      type: object
+      properties:
+        worker-name:
+          type: string
+          description: Sandbox name to run against (from sandbox-create or sandbox-list).
+          descriptions:
+            zh: 要操作的沙箱名（来自 sandbox-create 或 sandbox-list）。
+      required:
+        - worker-name
+    required_config:
+      - gateway-url
+      - gateway-token
+  - name: sandbox-computer-snapshot
+    description: "Dump an app's accessibility tree (or the whole desktop when `app` is omitted) as text; each element carries a stable ref. PREFER this over a screenshot to decide where to act. `depth` limits the tree depth (0 = full)."
+    descriptions:
+      zh: 以文本形式导出某个应用的无障碍树（省略 `app` 时为整个桌面）；每个元素带稳定的 ref。**决定操作位置时优先用它而非截图**。`depth` 限制树深度（0 = 完整）。
+    input_schema:
+      type: object
+      properties:
+        worker-name:
+          type: string
+          description: Sandbox name to run against (from sandbox-create or sandbox-list).
+          descriptions:
+            zh: 要操作的沙箱名（来自 sandbox-create 或 sandbox-list）。
+        app:
+          type: string
+          description: App name or pid (omit for the whole desktop / all windows).
+          descriptions:
+            zh: 应用名或 pid（省略则为整个桌面/所有窗口）。
+        depth:
+          type: integer
+          description: Max tree depth (0 = full).
+          descriptions:
+            zh: 最大树深度（0 = 完整）。
+      required:
+        - worker-name
+    required_config:
+      - gateway-url
+      - gateway-token
+  - name: sandbox-computer-find
+    description: "Match an accessibility selector (e.g. `button[name=\"OK\"]`, or a text/resource-id substring on Android) and return the matches. `output` selects `pretty` (default), `bounds`, or `center`. Use a snapshot first to learn element refs."
+    descriptions:
+      zh: 匹配无障碍选择器（如 `button[name=\"OK\"]`，Android 上为文本/resource-id 子串）并返回匹配项。`output` 可选 `pretty`（默认）、`bounds` 或 `center`。先 snapshot 以获取元素 ref。
+    input_schema:
+      type: object
+      properties:
+        worker-name:
+          type: string
+          description: Sandbox name to run against (from sandbox-create or sandbox-list).
+          descriptions:
+            zh: 要操作的沙箱名（来自 sandbox-create 或 sandbox-list）。
+        selector:
+          type: string
+          description: Accessibility selector, e.g. button[name="OK"].
+          descriptions:
+            zh: 无障碍选择器，如 button[name="OK"]。
+        app:
+          type: string
+          description: Restrict to one app (name or pid).
+          descriptions:
+            zh: 限定在某个应用内（名称或 pid）。
+        output:
+          type: string
+          description: "pretty | bounds | center (default pretty)."
+          descriptions:
+            zh: "pretty | bounds | center（默认 pretty）。"
+      required:
+        - worker-name
+        - selector
+    required_config:
+      - gateway-url
+      - gateway-token
+  - name: sandbox-computer-action
+    description: "Perform an accessibility action on a target ref/selector: press, focus, toggle, select, expand, collapse, set-value, type-text, scroll-into-view. `value` supplies the value for set-value/type-text. Prefer this over coordinate clicks."
+    descriptions:
+      zh: 对目标 ref/选择器执行无障碍动作：press、focus、toggle、select、expand、collapse、set-value、type-text、scroll-into-view。`value` 为 set-value/type-text 提供值。优先于坐标点击。
+    input_schema:
+      type: object
+      properties:
+        worker-name:
+          type: string
+          description: Sandbox name to run against (from sandbox-create or sandbox-list).
+          descriptions:
+            zh: 要操作的沙箱名（来自 sandbox-create 或 sandbox-list）。
+        action:
+          type: string
+          description: The action name (press/focus/toggle/select/expand/collapse/set-value/type-text/scroll-into-view).
+          descriptions:
+            zh: 动作名（press/focus/toggle/select/expand/collapse/set-value/type-text/scroll-into-view）。
+        target:
+          type: string
+          description: Element ref (from a snapshot) or selector.
+          descriptions:
+            zh: 元素 ref（来自 snapshot）或选择器。
+        value:
+          type: string
+          description: Value for set-value / type-text.
+          descriptions:
+            zh: set-value / type-text 的值。
+        app:
+          type: string
+          description: Restrict to one app (name or pid).
+          descriptions:
+            zh: 限定在某个应用内（名称或 pid）。
+      required:
+        - worker-name
+        - action
+        - target
+    required_config:
+      - gateway-url
+      - gateway-token
+  - name: sandbox-computer-click
+    description: "Click at screen coordinates (fallback for canvas/unknown widgets). `button` defaults to left; `count` supports double/triple clicks."
+    descriptions:
+      zh: 在屏幕坐标点击（canvas/未知控件的兜底）。`button` 默认 left；`count` 支持双击/三击。
+    input_schema:
+      type: object
+      properties:
+        worker-name:
+          type: string
+          description: Sandbox name to run against (from sandbox-create or sandbox-list).
+          descriptions:
+            zh: 要操作的沙箱名（来自 sandbox-create 或 sandbox-list）。
+        x:
+          type: integer
+          description: X coordinate.
+          descriptions:
+            zh: X 坐标。
+        y:
+          type: integer
+          description: Y coordinate.
+          descriptions:
+            zh: Y 坐标。
+        button:
+          type: string
+          description: "left | middle | right (default left)."
+          descriptions:
+            zh: "left | middle | right（默认 left）。"
+        count:
+          type: integer
+          description: Number of clicks (default 1).
+          descriptions:
+            zh: 点击次数（默认 1）。
+      required:
+        - worker-name
+        - x
+        - y
+    required_config:
+      - gateway-url
+      - gateway-token
+  - name: sandbox-computer-type
+    description: "Type text into the focused element (or the given `target`, which is focused first). `submit: true` presses Return afterwards."
+    descriptions:
+      zh: "向聚焦元素（或先聚焦 `target`）输入文本。`submit: true` 之后按 Return。"
+    input_schema:
+      type: object
+      properties:
+        worker-name:
+          type: string
+          description: Sandbox name to run against (from sandbox-create or sandbox-list).
+          descriptions:
+            zh: 要操作的沙箱名（来自 sandbox-create 或 sandbox-list）。
+        text:
+          type: string
+          description: Text to type.
+          descriptions:
+            zh: 要输入的文本。
+        target:
+          type: string
+          description: Element ref/selector to focus first (optional).
+          descriptions:
+            zh: 先聚焦的元素 ref/选择器（可选）。
+        submit:
+          type: boolean
+          description: Press Return after typing.
+          descriptions:
+            zh: 输入后按 Return。
+      required:
+        - worker-name
+        - text
+    required_config:
+      - gateway-url
+      - gateway-token
+  - name: sandbox-computer-key
+    description: "Press a key, optionally holding modifiers. `held` is a list of modifier keys (e.g. [\"ctrl\"]); `key` is the key to press (e.g. \"Return\", \"a\", \"F5\")."
+    descriptions:
+      zh: 按键，可选按住修饰键。`held` 为修饰键列表（如 ["ctrl"]）；`key` 为要按的键（如 "Return"、"a"、"F5"）。
+    input_schema:
+      type: object
+      properties:
+        worker-name:
+          type: string
+          description: Sandbox name to run against (from sandbox-create or sandbox-list).
+          descriptions:
+            zh: 要操作的沙箱名（来自 sandbox-create 或 sandbox-list）。
+        key:
+          type: string
+          description: Key to press (e.g. Return, Escape, a, F5).
+          descriptions:
+            zh: 要按的键（如 Return、Escape、a、F5）。
+        held:
+          type: array
+          description: Modifier keys to hold (e.g. ["ctrl","shift"]).
+          descriptions:
+            zh: 按住的修饰键（如 ["ctrl","shift"]）。
+          items:
+            type: string
+      required:
+        - worker-name
+        - key
+    required_config:
+      - gateway-url
+      - gateway-token
+  - name: sandbox-computer-scroll
+    description: "Scroll at screen coordinates by (dx,dy). Positive dy scrolls content down (swipe up on Android)."
+    descriptions:
+      zh: 在屏幕坐标处按 (dx,dy) 滚动。dy 为正表示内容向下滚（Android 上为向上滑）。
+    input_schema:
+      type: object
+      properties:
+        worker-name:
+          type: string
+          description: Sandbox name to run against (from sandbox-create or sandbox-list).
+          descriptions:
+            zh: 要操作的沙箱名（来自 sandbox-create 或 sandbox-list）。
+        x:
+          type: integer
+          description: X coordinate.
+          descriptions:
+            zh: X 坐标。
+        y:
+          type: integer
+          description: Y coordinate.
+          descriptions:
+            zh: Y 坐标。
+        dx:
+          type: integer
+          description: Horizontal scroll amount.
+          descriptions:
+            zh: 水平滚动量。
+        dy:
+          type: integer
+          description: Vertical scroll amount.
+          descriptions:
+            zh: 垂直滚动量。
+      required:
+        - worker-name
+        - x
+        - y
+    required_config:
+      - gateway-url
+      - gateway-token
+  - name: sandbox-computer-drag
+    description: "Drag from (from_x,from_y) to (to_x,to_y), optionally over `duration_ms`."
+    descriptions:
+      zh: 从 (from_x,from_y) 拖拽到 (to_x,to_y)，可选 `duration_ms`。
+    input_schema:
+      type: object
+      properties:
+        worker-name:
+          type: string
+          description: Sandbox name to run against (from sandbox-create or sandbox-list).
+          descriptions:
+            zh: 要操作的沙箱名（来自 sandbox-create 或 sandbox-list）。
+        from_x:
+          type: integer
+          description: Start X.
+          descriptions:
+            zh: 起点 X。
+        from_y:
+          type: integer
+          description: Start Y.
+          descriptions:
+            zh: 起点 Y。
+        to_x:
+          type: integer
+          description: End X.
+          descriptions:
+            zh: 终点 X。
+        to_y:
+          type: integer
+          description: End Y.
+          descriptions:
+            zh: 终点 Y。
+        duration_ms:
+          type: integer
+          description: Duration in ms (0 = default).
+          descriptions:
+            zh: 时长（毫秒，0 = 默认）。
+      required:
+        - worker-name
+        - from_x
+        - from_y
+        - to_x
+        - to_y
+    required_config:
+      - gateway-url
+      - gateway-token
+  - name: sandbox-computer-screenshot
+    description: "Capture the screen to a PNG (returned as a durable `file:<code>`). Use this to SEE rendering; prefer sandbox-computer-snapshot to LOCATE elements. `region` is an optional crop (e.g. x,y,w,h)."
+    descriptions:
+      zh: 截屏为 PNG（以持久的 `file:<code>` 返回）。用它**查看渲染效果**；**定位元素**请优先用 sandbox-computer-snapshot。`region` 为可选裁剪区（如 x,y,w,h）。
+    input_schema:
+      type: object
+      properties:
+        worker-name:
+          type: string
+          description: Sandbox name to run against (from sandbox-create or sandbox-list).
+          descriptions:
+            zh: 要操作的沙箱名（来自 sandbox-create 或 sandbox-list）。
+        region:
+          type: string
+          description: Optional crop region (e.g. x,y,w,h).
+          descriptions:
+            zh: 可选裁剪区（如 x,y,w,h）。
+      required:
+        - worker-name
     required_config:
       - gateway-url
       - gateway-token
