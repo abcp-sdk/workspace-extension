@@ -4,6 +4,16 @@ import type { WorkerClient } from '../client.js'
 import type { Forgejo, CommitFile } from '../forgejo.js'
 import { tr } from '../i18n.js'
 import { strArg } from './shared.js'
+import { GitignoreSet, parseGitignore } from './gitignore.js'
+
+/**
+ * Hard caps on a single `sandbox-submit-mr`. Reading one `fileRead` RPC per
+ * file is the expensive step, so a huge directory (a `node_modules` that
+ * slipped past `.gitignore`, a build tree, a data dump) would time the tool
+ * out. Refuse EARLY with a clear message instead.
+ */
+const MAX_SUBMIT_FILES = 100
+const MAX_SUBMIT_BYTES = 10 * 1024 * 1024 // 10 MiB
 
 /** Context for the repo↔sandbox bridge tools. */
 export interface BridgeCtx {
@@ -72,6 +82,20 @@ interface SandboxFile {
   bytes: Uint8Array
 }
 
+/**
+ * The result of reading a sandbox repo directory:
+ *   - `files`   — the files to diff (ignored paths already excluded),
+ *   - `present` — EVERY repo-relative path physically present in the sandbox,
+ *     INCLUDING ignored ones. Deletion is decided from this: `.gitignore` only
+ *     hides UNTRACKED files, so a base file that is tracked yet matches
+ *     `.gitignore` (added with `git add -f`, or tracked before the rule) still
+ *     exists in the sandbox and must NOT be reported as a delete.
+ */
+interface Collected {
+  files: SandboxFile[]
+  present: Set<string>
+}
+
 /** Build a CommitFile from raw bytes, choosing text vs binary representation. */
 function toCommitFile(path: string, bytes: Uint8Array): CommitFile {
   try {
@@ -108,19 +132,20 @@ export async function sandboxSubmitMR(
   const title = strArg(args, 'title')
   const body = strArg(args, 'body')
 
-  // 1. Read the sandbox repo directory into repo-relative files.
-  const sandbox = await collectDir(ctx.client, dir, '')
-  if (sandbox.length === 0) {
+  // 1. Read the sandbox repo directory into repo-relative files. `.gitignore`
+  //    files found under `dir` are honored (nested included), so ignored trees
+  //    (node_modules, build output, …) never enter the change set.
+  const sandbox = await collectDir(ctx, dir)
+  if (sandbox.files.length === 0) {
     throw new TypedToolError('invalid_argument', tr(ctx.locale, 'submitNoFiles', { path: dir }))
   }
-  const sandboxByPath = new Map(sandbox.map(f => [f.path, f.bytes]))
 
   // 2. Read the base tree (repo-relative paths).
   const basePaths = await ctx.forgejo.listTree(r.org, r.repo, base, ctx.locale)
 
   // 3. Build the change set: added/changed files + deletions.
   const files: CommitFile[] = []
-  for (const f of sandbox) {
+  for (const f of sandbox.files) {
     const inBase = basePaths.has(f.path)
     if (!inBase) {
       files.push({ ...toCommitFile(f.path, f.bytes), operation: 'create' })
@@ -133,7 +158,10 @@ export async function sandboxSubmitMR(
     }
   }
   for (const p of basePaths) {
-    if (!sandboxByPath.has(p)) files.push({ path: p, operation: 'delete' })
+    // Use the PHYSICAL presence set (ignored-but-tracked files still exist), so
+    // a tracked base file that merely matches `.gitignore` is left untouched
+    // rather than deleted.
+    if (!sandbox.present.has(p)) files.push({ path: p, operation: 'delete' })
   }
   if (files.length === 0) {
     return { content: tr(ctx.locale, 'submitNoChanges', { org: r.org, repo: r.repo, base }) }
@@ -160,21 +188,82 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
 
 /**
  * Read a sandbox directory into repo-relative files. `sandboxDir` is the repo
- * directory inside the workspace; `repoDir` is the repo-relative prefix the
- * files are given (here always ''). One recursive `fileList` (server-side depth)
- * replaces a round-trip per directory.
+ * directory inside the workspace. One recursive `fileList` (server-side depth)
+ * replaces a round-trip per directory; `.gitignore` files anywhere under it are
+ * honored so ignored trees are never read. Enforces the size/count caps.
  */
-async function collectDir(client: WorkerClient, sandboxDir: string, repoDir: string): Promise<SandboxFile[]> {
+async function collectDir(ctx: BridgeCtx, sandboxDir: string): Promise<Collected> {
   const root = sandboxDir.replace(/\/+$/, '')
-  const res = await client.fileList({ path: root, depth: 1000, limit: 10000 })
-  const out: SandboxFile[] = []
+  const res = await ctx.client.fileList({ path: root, depth: 1000, limit: 10000 })
+
+  // Build the .gitignore set from every `.gitignore` found under the root
+  // (nested files override their ancestors). Each is read once.
+  const igFiles = res.files.filter(e => {
+    if (e.isDir) return false
+    const rel = relPath(root, e.path)
+    return rel === '.gitignore' || rel.endsWith('/.gitignore')
+  })
+  const parsed = await Promise.all(
+    igFiles.map(async e => parseGitignore(decodeText((await ctx.client.fileRead({ path: e.path })).content), dirOf(relPath(root, e.path)))),
+  )
+  const ignore = new GitignoreSet(parsed)
+
+  // Every repo-relative path PHYSICALLY present (ignored or not): the delete
+  // decision uses this, so a tracked base file matching `.gitignore` survives.
+  const present = new Set<string>()
+  // Pre-filter by the server-reported isDir + .gitignore BEFORE reading any
+  // bytes, so an ignored tree costs no `fileRead` at all.
+  const keep: Array<{ rel: string; path: string; size: number }> = []
+  let total = 0
   for (const entry of res.files) {
     if (entry.isDir) continue
-    let rel = entry.path
-    if (rel === root || rel.startsWith(`${root}/`)) rel = rel.slice(root.length + 1)
-    if (rel === '' || rel === root) continue
-    const data = await client.fileRead({ path: entry.path })
-    out.push({ path: repoDir === '' ? rel : `${repoDir}/${rel}`, bytes: data.content })
+    const rel = relPath(root, entry.path)
+    if (rel === '') continue
+    present.add(rel)
+    if (ignore.ignores(rel, false)) continue
+    const size = Number(entry.size ?? 0)
+    if (keep.length >= MAX_SUBMIT_FILES) {
+      throw new TypedToolError(
+        'invalid_argument',
+        tr(ctx.locale, 'submitTooManyFiles', { count: keep.length + 1, max: MAX_SUBMIT_FILES, path: sandboxDir }),
+      )
+    }
+    if (total + size > MAX_SUBMIT_BYTES) {
+      throw new TypedToolError(
+        'invalid_argument',
+        tr(ctx.locale, 'submitTooLarge', { max: humanMiB(MAX_SUBMIT_BYTES), path: sandboxDir }),
+      )
+    }
+    keep.push({ rel, path: entry.path, size })
+    total += size
   }
-  return out
+
+  const out: SandboxFile[] = []
+  for (const f of keep) {
+    const data = await ctx.client.fileRead({ path: f.path })
+    out.push({ path: f.rel, bytes: data.content })
+  }
+  return { files: out, present }
+}
+
+/** Repo-relative path of `p` under `root` ('' when `p` is the root itself). */
+function relPath(root: string, p: string): string {
+  if (p === root) return ''
+  return p.startsWith(`${root}/`) ? p.slice(root.length + 1) : p
+}
+
+/** Directory part of a repo-relative path ('' when it is at the root). */
+function dirOf(rel: string): string {
+  const i = rel.lastIndexOf('/')
+  return i < 0 ? '' : rel.slice(0, i)
+}
+
+/** Decode a `.gitignore` body (best-effort UTF-8; invalid bytes are dropped). */
+function decodeText(bytes: Uint8Array): string {
+  return new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+}
+
+/** Human MiB label for an error message. */
+function humanMiB(bytes: number): string {
+  return `${Math.round(bytes / (1024 * 1024))}MiB`
 }

@@ -96,4 +96,58 @@ describe('sandbox-submit-mr change set', () => {
     const r = await sandboxSubmitMR(c, { org: 'acme', repo: 'web', base: 'main', path: 'myapp' })
     expect(String(r.content)).toContain('identical')
   })
+
+  it('honors .gitignore: ignored trees never enter the change set', async () => {
+    const enc = (s: string) => new TextEncoder().encode(s)
+    const { c, cap } = ctxWith({
+      'myapp/.gitignore': enc('node_modules/\n'),
+      'myapp/src/a.ts': enc('export const a = 1\n'),
+      'myapp/node_modules/pkg/index.js': enc('module.exports = {}\n'),
+    })
+    await sandboxSubmitMR(c, { org: 'acme', repo: 'web', base: 'main', path: 'myapp' })
+    expect(cap.files.map(f => f.path).sort()).toEqual(['.gitignore', 'src/a.ts'])
+  })
+
+  it('refuses more than the file-count cap', async () => {
+    const files: Record<string, Uint8Array> = {}
+    for (let i = 0; i < 101; i++) files[`myapp/f${i}.txt`] = new TextEncoder().encode('x')
+    const { c } = ctxWith(files)
+    const e = await sandboxSubmitMR(c, { org: 'acme', repo: 'web', base: 'main', path: 'myapp' }).catch(x => x)
+    expect((e as { code?: string }).code).toBe('invalid_argument')
+    expect(String(e)).toContain('100')
+  })
+
+  it('refuses a change set over the byte cap', async () => {
+    const big = new Uint8Array(11 * 1024 * 1024) // 11 MiB in one file
+    const { c } = ctxWith({ 'myapp/big.bin': big })
+    const e = await sandboxSubmitMR(c, { org: 'acme', repo: 'web', base: 'main', path: 'myapp' }).catch(x => x)
+    expect((e as { code?: string }).code).toBe('invalid_argument')
+    expect(String(e)).toContain('MiB')
+  })
+
+  // A base file that is TRACKED yet matches .gitignore (added with `git add -f`,
+  // or tracked before the rule) exists physically in the sandbox. .gitignore only
+  // hides UNTRACKED files, so it must NOT be reported as a delete — that would
+  // silently remove a legitimate file from the target branch.
+  it('does not delete a tracked base file that matches .gitignore', async () => {
+    const enc = (s: string) => new TextEncoder().encode(s)
+    const { c, cap } = ctxWith(
+      { 'myapp/.gitignore': enc('*.log\n'), 'myapp/keep.log': enc('tracked\n') },
+      { '.gitignore': enc('*.log\n'), 'keep.log': enc('tracked\n') },
+    )
+    await sandboxSubmitMR(c, { org: 'acme', repo: 'web', base: 'main', path: 'myapp' })
+    expect(cap.files.map(f => `${f.path}:${f.operation}`)).toEqual([])
+  })
+
+  // The counterpart: an ignored path that is ALSO untracked (absent from base)
+  // is neither submitted nor deleted.
+  it('leaves an untracked ignored tree alone (no create, no delete)', async () => {
+    const enc = (s: string) => new TextEncoder().encode(s)
+    const { c, cap } = ctxWith(
+      { 'myapp/.gitignore': enc('node_modules/\n'), 'myapp/a.ts': enc('a\n'), 'myapp/node_modules/x.js': enc('x\n') },
+      { '.gitignore': enc('node_modules/\n'), 'a.ts': enc('a\n') },
+    )
+    await sandboxSubmitMR(c, { org: 'acme', repo: 'web', base: 'main', path: 'myapp' })
+    expect(cap.files).toEqual([])
+  })
 })
