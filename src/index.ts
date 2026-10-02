@@ -78,6 +78,8 @@ import {
   fanoutRef,
   recordBaseline,
 } from './tools/fanout.js'
+import * as C from './computer/tools.js'
+import { probeTarget, type SandboxTarget } from './computer/target.js'
 import {
   renderInfo,
   sandboxCreate,
@@ -115,7 +117,7 @@ import {
 } from './tools/helm.js'
 
 export const EXT_ID = 'workspace'
-export const EXT_VERSION = '0.15.0'
+export const EXT_VERSION = '0.16.0'
 
 /** Config names (re-exported for tests). */
 export const CONFIG_MANAGER_URL = CONFIG.gatewayUrl
@@ -442,7 +444,37 @@ export function createWorkspaceConfig(
       )
     }
 
-  const handlers: Handlers = {
+  /**
+   * Wrap a computer-use (GUI) tool. Resolves `worker-name` to a live worker,
+   * detects the platform from the worker's `info.os` and GATES on the
+   * accessibility tooling (the worker's probed `capabilities.xa11y`, falling
+   * back to a CLI probe on an older worker), then injects the target.
+   */
+  const computerWrap = (
+    fn: (ctx: C.ToolCtx, t: SandboxTarget, args: Record<string, unknown>) => Promise<ToolResultData>,
+  ): ToolSpec['execute'] => {
+    if (deps === undefined) {
+      return async () => {
+        throw new TypedToolError('internal', tr('en', 'fileToolsRequireBus'))
+      }
+    }
+    return async (args, _callId, sessionName, _signal, tenant) => {
+      const t = tenant ?? ''
+      const s = sessionName ?? ''
+      const locale = await localeOf(deps, t, s)
+      const a = args ?? {}
+      const name = strArg(a, 'worker-name')
+      if (name === '') {
+        throw new TypedToolError('invalid_argument', tr(locale, 'workerNameRequired'))
+      }
+      const ep = await resolverFor(s, t, locale).resolve(name)
+      const client = makeClient(ep)
+      const target = await probeTarget(client, name, locale)
+      return fn({ deps, locale, tenant: t, session: s }, target, a)
+    }
+  }
+
+    const handlers: Handlers = {
     // ---- sandbox lifecycle (workspace gateway) ----
     'sandbox-create': sandboxWrap(sandboxCreate),
     'sandbox-list': sandboxWrap(sandboxList),
@@ -469,6 +501,18 @@ export function createWorkspaceConfig(
     'sandbox-file-upload': fileWrap(uploadFile),
     'sandbox-checkout': bridgeWrap(sandboxCheckout),
     'sandbox-submit-mr': bridgeWrap(sandboxSubmitMR),
+
+    // ---- computer-use (GUI via the accessibility tree) ----
+    'sandbox-computer-apps': computerWrap((ctx, target) => C.apps(ctx, target)),
+    'sandbox-computer-snapshot': computerWrap(C.snapshot),
+    'sandbox-computer-find': computerWrap(C.find),
+    'sandbox-computer-action': computerWrap(C.action),
+    'sandbox-computer-click': computerWrap(C.click),
+    'sandbox-computer-type': computerWrap(C.typeText),
+    'sandbox-computer-key': computerWrap(C.key),
+    'sandbox-computer-scroll': computerWrap(C.scroll),
+    'sandbox-computer-drag': computerWrap(C.drag),
+    'sandbox-computer-screenshot': computerWrap(C.screenshot),
 
     // ---- repo-* ----
     'repo-explore': repoWrap(repoExplore),
