@@ -53,7 +53,7 @@ const EXPECTED_TOOLS = [
   'oci-import',
   'sandbox-list',
   'sandbox-status',
-  // sandbox execution (easyworker)
+  // sandbox execution (agent-worker)
   'sandbox-checkout',
   'sandbox-submit-mr',
   'sandbox-file-download',

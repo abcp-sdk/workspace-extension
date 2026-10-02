@@ -35,6 +35,36 @@ export interface WorkerInfo {
   /** The worker user's home dir (where `~` resolves); may be ''. */
   home: string
   bootId: string
+  /**
+   * What the sandbox IMAGE can do (probed by the worker at request time). A
+   * missing/empty value means "not detected", not "impossible". Lets a caller
+   * (and the model) know whether the GUI / computer-use tools can drive this
+   * sandbox WITHOUT knowing the image ahead of time.
+   */
+  capabilities?: {
+    desktop: boolean
+    display: string
+    novnc: boolean
+    novncPort: number
+    xa11y: boolean
+    distro: string
+  } | undefined
+}
+
+/** Render the sandbox's probed capabilities as one short line ('' when none). */
+function renderCapabilities(locale: string, caps: WorkerInfo['capabilities']): string {
+  if (caps === undefined) return ''
+  const parts: string[] = []
+  if (caps.desktop) {
+    parts.push(tr(locale, 'infoCapsDesktop', { display: caps.display || '?' }))
+  }
+  if (caps.novnc) {
+    parts.push(tr(locale, 'infoCapsNovnc', { port: caps.novncPort }))
+  }
+  if (caps.xa11y) parts.push(tr(locale, 'infoCapsA11y'))
+  if (caps.distro !== '') parts.push(tr(locale, 'infoCapsDistro', { distro: caps.distro }))
+  const body = parts.length > 0 ? parts.join(', ') : tr(locale, 'infoCapsNone')
+  return tr(locale, 'infoCapabilities', { caps: body })
 }
 
 /** Render a worker's InfoResponse + its svc domain (shared by info + create). */
@@ -45,6 +75,8 @@ export function renderInfo(
 ): { text: string; data: Record<string, unknown> } {
   const home = info.home ?? ''
   const homeLine = home !== '' ? `\n${tr(locale, 'infoHome', { path: home })}` : ''
+  const capsLine = renderCapabilities(locale, info.capabilities)
+  const capsText = capsLine !== '' ? `\n${capsLine}` : ''
   const text =
     tr(locale, 'infoHeader', { os: info.os, arch: info.arch, shell: info.shell }) +
     '\n' +
@@ -53,10 +85,15 @@ export function renderInfo(
     '\n' +
     tr(locale, 'infoService', { url: domain }) +
     '\n' +
-    tr(locale, 'infoBoot', { id: info.bootId })
+    tr(locale, 'infoBoot', { id: info.bootId }) +
+    capsText
   return {
     text,
-    data: { os: info.os, arch: info.arch, shell: info.shell, workspace: info.workspace, home, url: domain, boot_id: info.bootId },
+    data: {
+      os: info.os, arch: info.arch, shell: info.shell, workspace: info.workspace,
+      home, url: domain, boot_id: info.bootId,
+      ...(info.capabilities !== undefined ? { capabilities: info.capabilities } : {}),
+    },
   }
 }
 

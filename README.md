@@ -1,46 +1,56 @@
 # workspace-extension
 
-A standalone abc-protocol **extension server** with three surfaces:
+A standalone abc-protocol **extension server** for the workspace stack. It has
+four surfaces:
 
-- **`sandbox-*` lifecycle** — create/list/status/delete easyworker sandboxes on
-  demand via the [**worker-manager**](../worker-manager) service (Connect RPC).
+- **`sandbox-*` lifecycle** — create/list/status/delete sandboxes on demand via
+  the **workspace gateway** (`workspace.v1.BranchSessionService`), which owns the
+  Kubernetes sandbox backend in-process.
 - **`sandbox-*` execution** — run commands and read/write files in a named
   sandbox (direct Connect RPC over `worker.v1.WorkerService`).
-- **`repo-*`** — read a **Forgejo** repository (via the workspace gateway), with
-  branches, tags, history, diffs and pull requests.
+- **`repo-*` / `service-*` / `helm-*` / `pvc-*`** — read a Forgejo repository,
+  build images, and run long-lived workloads (services, Helm releases, PVCs) —
+  all via the workspace gateway, which owns the credentials and enforces tenant
+  ownership.
 - **`sandbox-checkout` / `sandbox-submit-mr`** — check a repository tree into a
   sandbox, edit it there, and submit the changes as a change request. This is the
   ONLY way branch content changes: there is no tool that writes a branch
   directly. Edits happen in a sandbox; the gateway materializes the diff onto an
   immutable `mr/...` head branch and opens the MR.
 
-Unlike easylab's `ops-extension` / `repo-extension` (which go through the
-easylab gateway), this extension is a deliberately small **direct client**.
-
-> **Alternative:** for a single, stable worker (no dynamic sandboxes, no git),
-> use the sibling [`worker-extension`](../worker-extension) instead. They are
-> alternatives: pick `worker-extension` when one fixed worker is enough, and
-> this one when you need many workspaces with durable files in git and scratch
+> **Alternative:** for a fixed set of config-registered workers (no dynamic
+> sandboxes, no git), use the sibling [`worker-extension`](../worker-extension)
+> instead. This one is for many workspaces with durable files in git and scratch
 > files in a sandbox.
 
 ## Design
 
 - **Own process, own repo.** The agent discovers it over `abc.discover` plus an
   `abc-presence` heartbeat; no agent/easylab code change is required.
-- **Dynamic workers, by name.** `sandbox-create` asks the worker-manager for a
-  sandbox (image + resources) and waits up to 60s for readiness; every execution
-  tool takes a required **`worker-name`** and resolves its URL + per-sandbox
-  token from the manager. `sandbox-list`/`sandbox-status`/`sandbox-delete`
-  round out the lifecycle. There is no fixed `worker-url`/`worker-token`.
-- **URLs as config.** `manager-url`/`manager-token` for the sandbox backend;
-  `forgejo-url` + auth for the repo. Tools declare their needs via
-  `required_config`, so the agent **hard-disables** a tool until its backend is
-  configured.
-- **Direct backends.** worker.v1 + worker_manager.v1 descriptors are vendored
-  under `src/gen/`; Forgejo is a small typed REST client (`src/forgejo.ts`).
-- **Files route through the agent.** `sandbox-upload`/`sandbox-download` use the
-  agent file RPCs; the **agent derives the MIME**. `sandbox-read` never ingests:
-  binary content is rejected, text is windowed with line numbers.
+- **Dynamic sandboxes, by name.** `sandbox-create` asks the **workspace gateway**
+  for a sandbox (image + resources) and waits up to 60s for readiness; every
+  execution tool takes a required **`worker-name`** and resolves its URL +
+  per-sandbox token from the gateway. `sandbox-list`/`sandbox-status`/
+  `sandbox-delete` round out the lifecycle. There is no fixed
+  `worker-url`/`worker-token`.
+- **Pre-built, worker-bundled images.** The gateway does **NOT** inject the
+  worker at launch: a sandbox runs a pre-built image that already bundles
+  `agent-worker`, and only images from the deployment's sandbox org
+  (`SANDBOX_ORG`, default `sandbox`) are accepted. Those images are built by
+  **`abc-protocol/worker`**'s `sandbox-images/build.sh` (an
+  `agent-toolchain/toolchain-<lang>` base + the cross-compiled worker). A worker
+  change therefore requires **rebuilding the `sandbox-*` images** — see
+  `DEVELOP.md`.
+- **Gateway as config.** `gateway-url`/`gateway-token` are the ONLY config: the
+  gateway fronts Forgejo (repo), Kubernetes (sandboxes/services/PVCs/Helm) and
+  the worker resolution. Tools declare their needs via `required_config`, so the
+  agent **hard-disables** a tool until the gateway is configured.
+- **Direct worker RPC.** `worker.v1` descriptors are vendored under
+  `src/gen/worker/v1` (see `src/gen/README.md` for the regeneration recipe); the
+  extension talks to a resolved sandbox directly over Connect RPC.
+- **Files route through the agent.** `sandbox-file-upload`/`sandbox-file-download`
+  use the agent file RPCs; the **agent derives the MIME**. `sandbox-file-read`
+  never ingests: binary content is rejected, text is windowed with line numbers.
 - **Localized end to end.** Tool/config descriptions carry an English
   `description` + a `descriptions.zh` map (resolved agent-side). Runtime text is
   localized through a typed catalog (`src/i18n.ts`) using the agent-projected
@@ -52,7 +62,7 @@ easylab gateway), this extension is a deliberately small **direct client**.
 
 | Surface | Mechanism | Source |
 |---|---|---|
-| Tool / config **descriptions** | `description` + `descriptions[locale]` | `src/index.ts` `TOOL_META`, agent resolves via `pickDescription` |
+| Tool / config **descriptions** | `description` + `descriptions[locale]` | `manifest.yaml`, agent resolves via `pickDescription` |
 | Runtime **content** + **errors** | typed catalog + `tr(locale, key, params)` | `src/i18n.ts` |
 
 The session locale is read once per tool call by `localeOf(...)` from the
@@ -61,26 +71,21 @@ is an OPEN map: add a language by adding a column to each entry — no code chan
 
 ## Tools
 
-### sandbox-* (easyworker)
-
-Every `sandbox-*` tool requires `manager-url` + `manager-token`. The four
-lifecycle tools talk to the worker-manager; every execution tool additionally
-takes a required **`worker-name`**.
-
-**Lifecycle (worker-manager)**
+### sandbox-* lifecycle (workspace gateway)
 
 | Tool | Notes |
 |---|---|
-| `sandbox-create` | create a sandbox from an `image` (must contain easyworker) with optional `cpu`/`memory`/`workspace`/`env`; waits up to 60s for readiness |
+| `sandbox-create` | create a sandbox from a pre-built worker-bundled `image` (must be from the sandbox org; omit for the deployment default) with optional `cpu`/`memory`/`kvm`/`gpu-count`/`env`; waits up to 60s for readiness. A name is never reused. |
 | `sandbox-list` | list managed sandboxes (name, phase, image, url, created, creator) |
-| `sandbox-status` | one sandbox's live state (`worker-name`) |
-| `sandbox-delete` | delete a sandbox + its pod/service/secret (`worker-name`) |
+| `sandbox-status` | one sandbox's live state (`worker-name`), with pod diagnostics (restarts, failure reason) |
+| `sandbox-delete` | delete a sandbox (pod + service + secret) |
+| `list-oci-images` | browse OCI images; `owner="sandbox"` lists the deployable sandbox images |
 
-**Execution (easyworker, `worker-name` required)**
+### sandbox-* execution (agent-worker, `worker-name` required)
 
 | Tool | Worker RPC | Notes |
 |---|---|---|
-| `sandbox-info` | `Info` | os/arch/shell/workspace/boot_id |
+| `sandbox-info` | `Info` | os/arch/shell/workspace/home/boot_id **+ probed capabilities** (desktop/display, noVNC, `xa11y`, distro) |
 | `sandbox-exec` | `Execute` + `JobWait` loops + `JobOutput` | short tasks; waits ≤ `timeout` s (default 5, max 60). Always returns `job-id`; on completion up to 1000 lines, on timeout the **oldest 200** lines + "still running" |
 | `sandbox-job-start` | `Execute` | fire-and-forget long task; returns `job-id` only |
 | `sandbox-job-output` | `JobOutput` | `offset` (negative = from end) + `limit` (default 200, max 1000), `stream`; display capped at 1000 lines / 120 KiB |
@@ -89,77 +94,62 @@ takes a required **`worker-name`**.
 | `sandbox-job-stdin` | `JobStdin` | write/close a job's stdin |
 | `sandbox-job-list` | `ListJobs` | id/state/exit/command |
 
-**Files (`worker-name` required)**
+### sandbox-* files (`worker-name` required)
 
 | Tool | Notes |
 |---|---|
-| `sandbox-read` | text-only, `offset`/`limit` (default 200, max 1000), **line-numbered**, truncation marker; binary → error |
-| `sandbox-write` | overwrite with full content; rejected over 120 KiB; returns the numbered **whole** file |
-| `sandbox-edit` | anchor-line edit: `start-anchor-line`/`end-anchor-line` are the UNCHANGED lines just OUTSIDE the region (`0` = head, `total+1` = tail) and `start-anchor`/`end-anchor` are their current text (verified); the lines between them are replaced (empty region inserts, empty content deletes) |
-| `sandbox-ls` | breadth-first tree levels 1..`depth` (default 3), `limit` default 200 / max 1000 |
-| `sandbox-download` | agent `file:<code>` → workspace path |
-| `sandbox-upload` | workspace path → agent `file:<code>` (agent derives the MIME) |
+| `sandbox-file-read` | text-only, `offset`/`limit` (default 200, max 1000), **line-numbered**, truncation marker; binary → error |
+| `sandbox-file-patch` | apply a multi-file `*** Begin Patch`/`*** End Patch` patch in ONE call — the way to create, edit, and delete files; atomic (all hunks must match) |
+| `sandbox-file-ls` | breadth-first tree levels 1..`depth` (default 3), `limit` default 200 / max 1000 |
+| `sandbox-file-download` | agent `file:<code>` → workspace path |
+| `sandbox-file-upload` | workspace path → agent `file:<code>` (agent derives the MIME) |
 | `sandbox-checkout` | Forgejo archive(`.tar.gz`) → worker `SyncFolder`; `clean=false` (default) keeps sandbox-only files |
-| `sandbox-submit-mr` | diff the sandbox repo dir (`path`) vs `base` and submit the change set as an MR — the ONLY write path; the gateway materializes it onto a new immutable `mr/...` head |
+| `sandbox-submit-mr` | diff the sandbox repo dir (`path`) vs `base` and submit the change set as an MR — the ONLY write path; honors `.gitignore`, caps at 100 files / 10 MiB |
 
-### repo-* (Forgejo)
+### repo-* (Forgejo, via the gateway)
 
-Every `repo-*` tool requires `gateway-url`/`gateway-token` (the gateway owns the
-Forgejo credentials). Address args: `org`, `repo`, and optional `ref` (branch /
-sha / tag; omitted = the repository default branch).
+Address args: `org`, `repo`, and optional `ref` (branch / sha / tag; omitted =
+the repository default branch).
 
 **Content (read-only + MR)**
 
 | Tool | Notes |
 |---|---|
 | `repo-explore` | list orgs, or an org's repos + branches (private included); optional `keyword` |
-| `repo-create-org` | create an organization |
-| `repo-create-repo` | create a repository under an org or user; optional `auto-init` + `default-branch` |
-| `repo-file-read` | line-numbered text window |
-| `repo-file-list` | list a directory (or a file) at a ref |
-| `sandbox-submit-mr` | the only way to change a branch: submits the sandbox diff as an MR |
+| `repo-create-org` / `repo-create-repo` | create an organization / a repository (optional `auto-init` + `default-branch`) |
+| `repo-import` / `repo-remove` | import a remote repo / delete a repo |
+| `repo-set-push-mirror` / `repo-list-push-mirrors` / `repo-delete-push-mirror` | manage push mirrors |
+| `repo-build-image` / `oci-import` | build an image from a repo Dockerfile / mirror an upstream image |
+| `repo-file-read` / `repo-file-list` | line-numbered text window / list a directory (or a file) at a ref |
 
 **History / refs / collaboration**
 
 | Tool | Notes |
 |---|---|
-| `repo-log` | commit history (optional `path`/`ref` filter) |
-| `repo-show` | one commit's metadata + patch |
-| `repo-diff` | compare two refs (`base...head`) |
-| `repo-branches` | list branches |
-| `repo-tags` / `repo-tag-create` | list / create tags |
+| `repo-log` / `repo-show` / `repo-diff` | commit history / one commit + patch / compare two refs (`base...head`) |
+| `repo-branches` / `repo-tags` / `repo-tag-create` | branches / tags |
 | `repo-mr-list` / `repo-mr-comment` / `repo-mr-merge` / `repo-mr-close` | pull requests; merge/close allowed ONLY when the MR's `base` is your own branch |
 | `repo-mail-send` | message any real branch session (peers; cross-repo allowed; never an `mr/...` branch) |
 
-## Anchor-line edit
+### service-* / helm-* / pvc-* (via the gateway)
 
-Both `sandbox-edit` and `repo-edit` edit by ANCHOR LINE NUMBERS. The edit region
-is the lines STRICTLY BETWEEN two anchors that are the UNCHANGED lines just
-outside it. FOUR arguments are required:
-
-- `start-anchor-line`: the unchanged line ABOVE the region (`0` = the head).
-- `end-anchor-line`: the unchanged line BELOW the region (`total + 1` = the tail).
-- `start-anchor` / `end-anchor`: your copy of the CURRENT text of those two
-  anchor lines (from read output, prefix removed). Verified with `trim()`; a
-  mismatch (or an empty value where the line exists) refuses the edit
-  (`retryable`, no write). At a boundary that does not exist (`0` / `total + 1`)
-  pass an empty string.
-
-So insert between lines 27 and 28 with `27`/`28` (plus the two anchor texts);
-replace lines 28..29 with `27`/`30`; prepend with `0`/`1`; append with
-`total`/`total + 1`. An empty region inserts; empty `content` deletes.
-Out-of-range anchors are rejected (never clamped). There is no read-before-edit
-requirement.
+| Tool | Notes |
+|---|---|
+| `service-deploy` / `service-list` / `service-delete` / `service-logs` | run a user image as a long-lived Deployment + Service; blue/green slots |
+| `service-promote` / `service-rollback` | switch the service's public address between blue/green slots |
+| `helm-deploy` / `helm-list` / `helm-history` / `helm-rollback` / `helm-uninstall` | render + apply a repo chart as a Helm release (one object per revision) |
+| `helm-promote` / `helm-rollback-release` | blue/green slot promotion for a Helm release |
+| `pvc-create` / `pvc-list` / `pvc-delete` | admin-managed storage for services |
 
 ## Configuration
 
 | Config | Used by | Meaning |
 |---|---|---|
-| `manager-url` | sandbox-*, bridge | worker-manager base URL |
-| `manager-token` | sandbox-*, bridge | worker-manager shared bearer |
-| `forgejo-url` | repo-*, bridge | Forgejo base URL |
-| `forgejo-token` | repo-* auth | personal access token (preferred) |
-| `forgejo-user` / `forgejo-password` | repo-* auth | HTTP Basic (used when no token) |
+| `gateway-url` | every tool | workspace-gateway base URL |
+| `gateway-token` | every tool | service token the gateway requires |
+
+The gateway owns the Forgejo credentials and the Kubernetes backend, so no other
+config is needed.
 
 ## Build
 
@@ -182,21 +172,21 @@ Probes: `GET /api/v1/health`.
 ## Live end-to-end tests
 
 `tests/e2e.live.test.ts` drives the `sandbox-*` tools against a **real**
-easyworker over a **real** NATS broker; `tests/e2e.repo.live.test.ts` drives the
-`repo-*` tools against a **real** Forgejo (and the bridge against both). Both are
-skipped unless their env vars are set. They serve the extension exactly as
-production does and use a real `Agent` role to discover it and push config
+agent-worker over a **real** NATS broker; `tests/e2e.repo.live.test.ts` drives
+the `repo-*` tools against a **real** Forgejo (and the bridge against both).
+Both are skipped unless their env vars are set. They serve the extension exactly
+as production does and use a real `Agent` role to discover it and push config
 through the config authority.
 
 ```bash
 # sandbox
-LIVE_NATS_URL=nats://<nats>:4222 WORKER_URL=http://<easyworker> WORKER_TOKEN=<bearer> \
+LIVE_NATS_URL=nats://<nats>:4222 WORKER_URL=http://<agent-worker> WORKER_TOKEN=<bearer> \
   npx vitest run tests/e2e.live.test.ts
 
 # repo (+ optional bridge)
 LIVE_NATS_URL=nats://<nats>:4222 FORGEJO_URL=http://<forgejo> FORGEJO_TOKEN=<pat> \
   E2E_ORG=<org> E2E_REPO=<repo> \
-  [WORKER_URL=http://<easyworker> WORKER_TOKEN=<bearer>] \
+  [WORKER_URL=http://<agent-worker> WORKER_TOKEN=<bearer>] \
   npx vitest run tests/e2e.repo.live.test.ts
 ```
 

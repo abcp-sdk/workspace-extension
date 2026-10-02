@@ -25,8 +25,9 @@ function buildArgs(args: Record<string, unknown>): Record<string, string> {
  * `repo-build-image`: build a container image from a repository Dockerfile
  * (context = a repo subdirectory) and push it to the deployment registry.
  *
- * The produced image does NOT have easyworker injected: to be usable as a
- * sandbox, the Dockerfile must FROM a worker-capable base image.
+ * The produced image does NOT have agent-worker injected: to be usable as a
+ * sandbox, the Dockerfile must FROM a worker-bundled base image (one built by
+ * `abc-protocol/worker`'s `sandbox-images/build.sh`).
  */
 export async function repoBuildImage(
   ctx: BuildCtx,

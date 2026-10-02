@@ -17,7 +17,7 @@ export type GatewayClient = Client<typeof BranchSessionService>
 
 /** The address + credential an operation runs against. */
 export interface WorkerEndpoint {
-  /** Base URL of an easyworker, e.g. `http://127.0.0.1:9090`. */
+  /** Base URL of an agent-worker sandbox, e.g. `http://wm-x.worker.svc.cluster.local`. */
   url: string
   /** Worker bearer token (empty only when the worker runs with auth off). */
   token: string
@@ -38,7 +38,7 @@ export function normalizeUrl(raw: string): string {
   return s
 }
 
-/** Build a bearer-authenticated worker client (h1, matching easyworker). */
+/** Build a bearer-authenticated worker client (h1, matching agent-worker). */
 export function createWorkerClient(ep: WorkerEndpoint): WorkerClient {
   const transport = createConnectTransport({
     baseUrl: normalizeUrl(ep.url),
