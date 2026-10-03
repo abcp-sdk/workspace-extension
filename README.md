@@ -107,7 +107,7 @@ is an OPEN map: add a language by adding a column to each entry — no code chan
 | `sandbox-file-download` | agent `file:<code>` → workspace path |
 | `sandbox-file-upload` | workspace path → agent `file:<code>` (agent derives the MIME) |
 | `sandbox-checkout` | Forgejo archive(`.tar.gz`) → worker `SyncFolder`; `clean=false` (default) keeps sandbox-only files |
-| `sandbox-submit-mr` | diff the sandbox repo dir (`path`) vs `base` and submit the change set as an MR — the ONLY write path; honors `.gitignore`, caps at 100 files / 10 MiB |
+| `sandbox-submit-mr` | diff the sandbox repo dir (`path`) vs `base` and submit the change set as an MR — the ONLY write path; honors `.gitignore`, caps at 20 MiB total |
 
 ### sandbox-computer-* (GUI, `worker-name` required)
 

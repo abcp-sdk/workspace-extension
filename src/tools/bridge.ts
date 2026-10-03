@@ -7,13 +7,13 @@ import { strArg } from './shared.js'
 import { GitignoreSet, parseGitignore } from './gitignore.js'
 
 /**
- * Hard caps on a single `sandbox-submit-mr`. Reading one `fileRead` RPC per
+ * Hard cap on a single `sandbox-submit-mr`. Reading one `fileRead` RPC per
  * file is the expensive step, so a huge directory (a `node_modules` that
  * slipped past `.gitignore`, a build tree, a data dump) would time the tool
- * out. Refuse EARLY with a clear message instead.
+ * out. Refuse EARLY with a clear message instead. The cap is on the TOTAL
+ * bytes of the sandbox repo directory (not on the file count).
  */
-const MAX_SUBMIT_FILES = 100
-const MAX_SUBMIT_BYTES = 10 * 1024 * 1024 // 10 MiB
+const MAX_SUBMIT_BYTES = 20 * 1024 * 1024 // 20 MiB
 
 /** Context for the repo↔sandbox bridge tools. */
 export interface BridgeCtx {
@@ -190,7 +190,7 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
  * Read a sandbox directory into repo-relative files. `sandboxDir` is the repo
  * directory inside the workspace. One recursive `fileList` (server-side depth)
  * replaces a round-trip per directory; `.gitignore` files anywhere under it are
- * honored so ignored trees are never read. Enforces the size/count caps.
+ * honored so ignored trees are never read. Enforces the total-size cap.
  */
 async function collectDir(ctx: BridgeCtx, sandboxDir: string): Promise<Collected> {
   const root = sandboxDir.replace(/\/+$/, '')
@@ -222,12 +222,6 @@ async function collectDir(ctx: BridgeCtx, sandboxDir: string): Promise<Collected
     present.add(rel)
     if (ignore.ignores(rel, false)) continue
     const size = Number(entry.size ?? 0)
-    if (keep.length >= MAX_SUBMIT_FILES) {
-      throw new TypedToolError(
-        'invalid_argument',
-        tr(ctx.locale, 'submitTooManyFiles', { count: keep.length + 1, max: MAX_SUBMIT_FILES, path: sandboxDir }),
-      )
-    }
     if (total + size > MAX_SUBMIT_BYTES) {
       throw new TypedToolError(
         'invalid_argument',

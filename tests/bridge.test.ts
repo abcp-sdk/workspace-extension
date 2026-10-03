@@ -108,17 +108,18 @@ describe('sandbox-submit-mr change set', () => {
     expect(cap.files.map(f => f.path).sort()).toEqual(['.gitignore', 'src/a.ts'])
   })
 
-  it('refuses more than the file-count cap', async () => {
+  // Regression: there is NO file-count cap. A large-but-small-in-bytes tree
+  // (e.g. 101 files) must submit fine — the cap is on total BYTES only.
+  it('does not cap the number of files', async () => {
     const files: Record<string, Uint8Array> = {}
     for (let i = 0; i < 101; i++) files[`myapp/f${i}.txt`] = new TextEncoder().encode('x')
-    const { c } = ctxWith(files)
-    const e = await sandboxSubmitMR(c, { org: 'acme', repo: 'web', base: 'main', path: 'myapp' }).catch(x => x)
-    expect((e as { code?: string }).code).toBe('invalid_argument')
-    expect(String(e)).toContain('100')
+    const { c, cap } = ctxWith(files)
+    await sandboxSubmitMR(c, { org: 'acme', repo: 'web', base: 'main', path: 'myapp' })
+    expect(cap.files).toHaveLength(101)
   })
 
   it('refuses a change set over the byte cap', async () => {
-    const big = new Uint8Array(11 * 1024 * 1024) // 11 MiB in one file
+    const big = new Uint8Array(21 * 1024 * 1024) // 21 MiB in one file
     const { c } = ctxWith({ 'myapp/big.bin': big })
     const e = await sandboxSubmitMR(c, { org: 'acme', repo: 'web', base: 'main', path: 'myapp' }).catch(x => x)
     expect((e as { code?: string }).code).toBe('invalid_argument')

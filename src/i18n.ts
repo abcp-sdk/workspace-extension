@@ -626,10 +626,6 @@ export const CATALOG = {
     en: 'the sandbox directory is identical to {base} in {org}/{repo}: nothing to submit.',
     zh: '沙箱目录与 {org}/{repo} 的 {base} 完全一致：没有可提交的改动。',
   },
-  submitTooManyFiles: {
-    en: 'too many files to submit: {count} exceeds the {max}-file limit for `{path}` (is an ignored/build tree leaking in? add it to .gitignore).',
-    zh: '待提交文件过多：{count} 超过 `{path}` 的 {max} 文件上限（是否有被忽略/构建产物混入？把它加进 .gitignore）。',
-  },
   submitTooLarge: {
     en: 'the change set under `{path}` exceeds the {max} limit; submit fewer/smaller files (add generated or binary trees to .gitignore).',
     zh: '`{path}` 下的改动集超过 {max} 上限；请减少文件数量或体积（把生成物/二进制目录加进 .gitignore）。',
