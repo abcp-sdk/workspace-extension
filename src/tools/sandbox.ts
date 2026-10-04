@@ -142,6 +142,11 @@ export async function sandboxCreate(
       kvm: args['kvm'] === true,
       gpuCount: Math.trunc(numArg(args, 'gpu-count') ?? 0),
       session: ctx.session ?? '',
+      // os: linux (default) | windows | macos; for windows/macos the gateway
+      // picks the VM image, forces kvm + 8Gi and injects GOLDEN_DISK_URL.
+      // `disk` (golden-disk URL) overrides the per-OS default; ignored on linux.
+      os: strArg(args, 'os'),
+      disk: strArg(args, 'disk'),
     })
     const w = res.sandbox
     if (w === undefined) {
