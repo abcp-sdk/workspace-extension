@@ -41,6 +41,17 @@ tools:
           description: Number of NVIDIA GPUs to request (0 = none; needs the GPU device plugin).
           descriptions:
             zh: 请求的 NVIDIA GPU 卡数（0 = 无；需 GPU device plugin）。
+        os:
+          type: string
+          enum: [linux, windows, macos]
+          description: "Sandbox OS: linux (default), windows or macos. For windows/macos the gateway runs a full OS in a KVM VM (auto kvm + 8Gi) and fetches the guest disk from `disk`."
+          descriptions:
+            zh: "沙箱操作系统：linux（默认）、windows 或 macos。windows/macos 会在 KVM 虚拟机里跑完整系统（自动 kvm + 8Gi），并从 `disk` 拉取 guest 磁盘。"
+        disk:
+          type: string
+          description: "Golden-disk download URL. ONLY used when os != linux; empty = the per-OS default (macOS → the xcode disk, Windows → the devtools disk). Cached in a shared PVC."
+          descriptions:
+            zh: "golden disk 下载地址。仅当 os != linux 时生效；空 = 按 OS 默认（macOS → xcode 盘，Windows → devtools 盘）。缓存在共享 PVC 中。"
         env:
           type: object
           description: Extra environment variables for the worker container.
