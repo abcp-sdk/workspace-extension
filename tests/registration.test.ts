@@ -83,6 +83,7 @@ const EXPECTED_TOOLS = [
   // repo-*
   'repo-branches',
   'repo-build-image',
+  'repo-build-status',
   'service-delete',
   'service-deploy',
   'service-list',

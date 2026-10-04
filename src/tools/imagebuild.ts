@@ -28,6 +28,10 @@ function buildArgs(args: Record<string, unknown>): Record<string, string> {
  * The produced image does NOT have agent-worker injected: to be usable as a
  * sandbox, the Dockerfile must FROM a worker-bundled base image (one built by
  * `abc-protocol/worker`'s `sandbox-images/build.sh`).
+ *
+ * The build runs in the BACKGROUND (a large image's layer push is minutes): the
+ * gateway returns a build_id immediately; poll `repo-build-status` for the
+ * result.
  */
 export async function repoBuildImage(
   ctx: BuildCtx,
@@ -54,11 +58,35 @@ export async function repoBuildImage(
       buildArgs: buildArgs(args),
     })
     return {
-      content: tr(ctx.locale, 'imageBuilt', { image: res.imageRef }) + '\n\n' + res.log,
-      data: { image_ref: res.imageRef },
+      content: tr(ctx.locale, 'imageBuildStarted', { image: `${image}:${tag}`, id: res.buildId }),
+      data: { build_id: res.buildId, image: `${image}:${tag}` },
     }
   } catch (e) {
     throw new TypedToolError('internal', tr(ctx.locale, 'imageBuildFailed', { image: `${image}:${tag}`, err: String(e) }))
+  }
+}
+
+/**
+ * `repo-build-status`: poll a background image build started by
+ * `repo-build-image`. Returns state (running|done|failed), the pushed image ref
+ * (on done) and the build log.
+ */
+export async function repoBuildStatus(
+  ctx: BuildCtx,
+  args: Record<string, unknown>,
+): Promise<ToolResultData> {
+  const buildId = strArg(args, 'build-id')
+  if (buildId === '') {
+    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'build-id' }))
+  }
+  const res = await ctx.workspace.getBuildStatus({ buildId })
+  const content =
+    tr(ctx.locale, 'buildStatus', { id: res.buildId, state: res.state }) +
+    (res.imageRef ? `\n${res.imageRef}` : '') +
+    (res.log ? `\n\n${res.log}` : '')
+  return {
+    content,
+    data: { build_id: res.buildId, state: res.state, image_ref: res.imageRef },
   }
 }
 
