@@ -1295,6 +1295,23 @@ tools:
     required_config:
       - gateway-url
       - gateway-token
+  - name: repo-build-status
+    description: "Poll a background image build started by repo-build-image. Returns its state (running|done|failed), the pushed image ref (on done) and the build log."
+    descriptions:
+      zh: 轮询由 repo-build-image 启动的后台镜像构建，返回状态（running|done|failed）、（完成时的）已推送镜像引用与构建日志。
+    input_schema:
+      type: object
+      properties:
+        build-id:
+          type: string
+          description: The build id returned by repo-build-image.
+          descriptions:
+            zh: repo-build-image 返回的 build id。
+      required:
+        - build-id
+    required_config:
+      - gateway-url
+      - gateway-token
   - name: oci-import
     description: Mirror an upstream container image (public, or private with auth-user/auth-token) into the deployment registry under an org you own. The image lands at <registry>/<org>/<name>:<tag> and is then usable from service-deploy or as a sandbox base. This is the image analogue of repo-import. Only runnable images can be mirrored (not arbitrary OCI artifacts); multi-arch sources collapse to linux/amd64.
     descriptions:

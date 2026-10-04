@@ -89,7 +89,7 @@ import {
   sandboxStatus,
   type SandboxCtx,
 } from './tools/sandbox.js'
-import { ociImport, repoBuildImage, type BuildCtx } from './tools/imagebuild.js'
+import { ociImport, repoBuildImage, repoBuildStatus, type BuildCtx } from './tools/imagebuild.js'
 import {
   serviceDelete,
   serviceDeploy,
@@ -524,6 +524,7 @@ export function createWorkspaceConfig(
     'repo-list-push-mirrors': repoWrap(repoListPushMirrors),
     'repo-delete-push-mirror': repoWrap(repoDeletePushMirror),
     'repo-build-image': buildWrap(repoBuildImage),
+    'repo-build-status': buildWrap(repoBuildStatus),
     'oci-import': buildWrap(ociImport),
     'repo-mail-send': mailWrap(repoMailSend),
 

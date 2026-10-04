@@ -370,9 +370,13 @@ export const CATALOG = {
     en: 'OCI images ({count}):',
     zh: 'OCI 镜像（{count} 个）：',
   },
-  imageBuilt: {
-    en: "Built and pushed image '{image}'.",
-    zh: "已构建并推送镜像 '{image}'。",
+  imageBuildStarted: {
+    en: "Started building image '{image}' in the background (build {id}). Poll `repo-build-status` with build-id={id} for the result.",
+    zh: "已后台开始构建镜像 '{image}'（build {id}）。用 `repo-build-status`（build-id={id}）轮询结果。",
+  },
+  buildStatus: {
+    en: "Build {id}: {state}.",
+    zh: "构建 {id}：{state}。",
   },
   imageBuildFailed: {
     en: "Failed to build image '{image}': {err}",
