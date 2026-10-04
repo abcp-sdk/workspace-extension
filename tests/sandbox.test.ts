@@ -107,6 +107,23 @@ describe('sandbox-create', () => {
     expect(got['session']).toBe('o:r:b')
   })
 
+  it('passes os + disk through to the gateway (VM sandbox)', async () => {
+    let got: Record<string, unknown> = {}
+    const mgr = fakeManager({
+      createSandbox: async (req: Record<string, unknown>) => {
+        got = req
+        return { sandbox: { name: 'w1', image: 'img', phase: 'Running', ready: true, url: 'http://w1:48080', creator: 't', createdAt: 1n } }
+      },
+    })
+    await sandboxCreate(ctx(mgr), { name: 'w1', os: 'macos', disk: 'http://x/disk.qcow2' })
+    expect(got['os']).toBe('macos')
+    expect(got['disk']).toBe('http://x/disk.qcow2')
+    // Omitted os/disk default to '' (the gateway applies linux + the per-OS disk).
+    await sandboxCreate(ctx(mgr), { name: 'w2' })
+    expect(got['os']).toBe('')
+    expect(got['disk']).toBe('')
+  })
+
   it('runs autoCheckout and appends its note when provided', async () => {
     const c: SandboxCtx = {
       workspace: fakeManager(),
