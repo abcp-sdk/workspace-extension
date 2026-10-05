@@ -23,7 +23,8 @@ export async function apps(
   ctx: ToolCtx,
   t: SandboxTarget,
 ): Promise<ToolResultData> {
-  const list = await t.platform.apps()
+  const res = await t.client.apps({})
+  const list = res.apps ?? []
   if (list.length === 0) {
     return { content: tr(ctx.locale, 'noApps'), data: { apps: [] } }
   }
@@ -44,13 +45,14 @@ export async function snapshot(
 ): Promise<ToolResultData> {
   const app = strArg(args, 'app')
   const depth = numArg(args, 'depth') ?? 0
-  const text = await t.platform.snapshot(app, Math.floor(depth))
+  const res = await t.client.snapshot({ app, depth: Math.floor(depth) })
+  const text = res.text
   if (text.trim() === '') {
     return { content: tr(ctx.locale, 'noApps') }
   }
   return {
     content: text,
-    data: { sandbox: t.sandbox, platform: t.platform.id },
+    data: { sandbox: t.sandbox },
   }
 }
 
@@ -65,7 +67,8 @@ export async function find(
   }
   const app = strArg(args, 'app')
   const output = strArg(args, 'output')
-  const text = await t.platform.find(selector, app, output)
+  const res = await t.client.find({ selector, app, output })
+  const text = res.text
   if (text.trim() === '') {
     return {
       content: `${tr(ctx.locale, 'noMatches', { selector })}\n${tr(ctx.locale, 'findByRefHint')}`,
@@ -93,7 +96,7 @@ export async function action(
   }
   const value = strArg(args, 'value')
   const app = strArg(args, 'app')
-  await t.platform.action(act, target, value, app)
+  await t.client.action({ action: act, target, value, app })
   return { content: tr(ctx.locale, 'actionDone', { action: act, target }) }
 }
 
@@ -109,7 +112,7 @@ export async function click(
   }
   const button = strArg(args, 'button')
   const count = Math.floor(numArg(args, 'count') ?? 1)
-  await t.platform.click(x, y, button, count)
+  await t.client.click({ x: Math.round(x), y: Math.round(y), button, count })
   return {
     content: tr(ctx.locale, 'clickedAt', {
       x: Math.round(x),
@@ -129,8 +132,8 @@ export async function typeText(
   }
   const target = strArg(args, 'target')
   const submit = args['submit'] === true
-  await t.platform.typeText(text, target)
-  if (submit) await t.platform.key('Return', [])
+  await t.client.type({ text, target })
+  if (submit) await t.client.key({ key: 'Return', held: [] })
   return { content: tr(ctx.locale, 'typedText', { count: text.length }) }
 }
 
@@ -146,7 +149,7 @@ export async function key(
         (x): x is string => typeof x === 'string',
       )
     : []
-  await t.platform.key(k, held)
+  await t.client.key({ key: k, held })
   return { content: tr(ctx.locale, 'pressedKey', { key: k }) }
 }
 
@@ -162,7 +165,7 @@ export async function scroll(
   }
   const dx = Math.floor(numArg(args, 'dx') ?? 0)
   const dy = Math.floor(numArg(args, 'dy') ?? 0)
-  await t.platform.scroll(x, y, dx, dy)
+  await t.client.scroll({ x: Math.round(x), y: Math.round(y), dx, dy })
   return {
     content: tr(ctx.locale, 'scrolled', {
       x: Math.round(x),
@@ -194,7 +197,13 @@ export async function drag(
     )
   }
   const durationMs = Math.floor(numArg(args, 'duration_ms') ?? 0)
-  await t.platform.drag(fromX, fromY, toX, toY, durationMs)
+  await t.client.drag({
+    fromX: Math.round(fromX),
+    fromY: Math.round(fromY),
+    toX: Math.round(toX),
+    toY: Math.round(toY),
+    durationMs,
+  })
   return {
     content: tr(ctx.locale, 'dragged', {
       fromX: Math.round(fromX),
@@ -214,20 +223,18 @@ export async function screenshot(
   args: Record<string, unknown>,
 ): Promise<ToolResultData> {
   const region = strArg(args, 'region')
-  const shot = await t.platform.screenshot(region)
-
-  // Read the PNG bytes back through the worker (absolute path, whole file).
-  const read = await t.client.fileRead({ path: shot.path })
-  if (read.content.length === 0) {
+  // The worker's ComputerService returns the PNG bytes directly (no temp file).
+  const shot = await t.client.screenshot({ region })
+  if (shot.png.length === 0) {
     throw new TypedToolError(
       'retryable',
-      tr(ctx.locale, 'screenshotFailed', { reason: 'empty file' }),
+      tr(ctx.locale, 'screenshotFailed', { reason: 'empty image' }),
     )
   }
   const name = `screenshot-${Date.now()}.png`
   const stored = await ctx.deps.ingestFile({
     name,
-    data: read.content,
+    data: shot.png,
     session: ctx.session,
     tenant: ctx.tenant,
   })
@@ -246,7 +253,7 @@ export async function screenshot(
           code: stored.code,
           mime: stored.mime || 'image/png',
           name,
-          size: read.content.length,
+          size: shot.png.length,
           width: shot.width,
           height: shot.height,
         },

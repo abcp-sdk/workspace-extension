@@ -2,7 +2,7 @@
 # schemas, required_config). Handlers (execute) live in src/index.ts; the SDK's
 # parseManifest/manifestConfig joins the two, exactly like the other extensions.
 id: workspace
-version: 0.17.1
+version: 0.18.0
 tools:
   - name: sandbox-create
     description: 'Create a sandbox and wait up to 60s for it to become healthy. A sandbox runs a PRE-BUILT image that already bundles the worker — the gateway no longer injects anything. `image` must be one of the deployment sandbox images from the dedicated sandbox org (see list-oci-images with owner="sandbox"); omit it for the deployment default. A name is never reused: if a sandbox with this name already exists the call is refused — delete it first with sandbox-delete. Returns the sandbox name, its in-cluster service DNS, and the worker environment (OS/arch, workspace root, boot id).'

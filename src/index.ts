@@ -7,7 +7,9 @@ import type {
 import { manifestConfig, parseManifest, TypedToolError } from '@abc-protocol/sdk'
 import manifestYaml from '../manifest.yaml'
 import {
+  createComputerClient,
   createGatewayClient,
+  type ComputerClient,
   type WorkerClient,
   WorkerClientCache,
   WorkerResolver,
@@ -131,6 +133,8 @@ export interface WorkspaceExtensionOpts {
   deps?: WorkspaceDeps
   /** Worker client factory (overridable in tests). */
   makeClient?: (ep: { url: string; token: string }) => WorkerClient
+  /** ComputerService client factory (overridable in tests). */
+  makeComputerClient?: (ep: { url: string; token: string }) => ComputerClient
   /** Forgejo-backed repo client factory. It is built OVER a gateway client, so
    *  every repo operation is tenant-scoped server-side (overridable in tests). */
   makeForgejo?: (gateway: GatewayClient) => Forgejo
@@ -152,6 +156,7 @@ export function createWorkspaceConfig(
   const deps = opts.deps ?? (bus !== undefined ? agentFileDeps(bus) : undefined)
   const cache = new WorkerClientCache()
   const makeClient = opts.makeClient ?? ((ep: { url: string; token: string }) => cache.get(ep))
+  const makeComputerClient = opts.makeComputerClient ?? ((ep: { url: string; token: string }) => createComputerClient(ep))
   const makeForgejo = opts.makeForgejo ?? ((gateway: GatewayClient) => new Forgejo({ gateway }))
   const makeManager =
     opts.makeManager ??
@@ -468,7 +473,7 @@ export function createWorkspaceConfig(
         throw new TypedToolError('invalid_argument', tr(locale, 'workerNameRequired'))
       }
       const ep = await resolverFor(s, t, locale).resolve(name)
-      const client = makeClient(ep)
+      const client = makeComputerClient(ep)
       const target = await probeTarget(client, name, locale)
       return fn({ deps, locale, tenant: t, session: s }, target, a)
     }
