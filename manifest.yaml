@@ -2148,6 +2148,67 @@ tools:
     required_config:
       - gateway-url
       - gateway-token
+  - name: helm-objects
+    description: List the LIVE status of every object a Helm release deployed (kind/name, ready, replicas, restarts, and the failure reason for an unhealthy pod). Use it to see why a release is not healthy.
+    descriptions:
+      zh: 列出某个 Helm release 部署的每个对象的**实时状态**（kind/name、是否就绪、副本数、重启次数、不健康 pod 的失败原因）。用来判断 release 为何不健康。
+    input_schema:
+      type: object
+      properties:
+        release:
+          type: string
+          description: Release name.
+          descriptions:
+            zh: Release 名称。
+      required:
+        - release
+    required_config:
+      - gateway-url
+      - gateway-token
+  - name: helm-object-logs
+    description: Read one release object's container log (kind must be "Pod"; use helm-objects first to get the pod names). tail defaults to 200; previous reads the crashed instance.
+    descriptions:
+      zh: 读取某个 release 对象的容器日志（kind 必须为 "Pod"；先用 helm-objects 拿到 pod 名）。tail 默认 200；previous 读取崩溃的那次实例。
+    input_schema:
+      type: object
+      properties:
+        release:
+          type: string
+          description: Release name.
+          descriptions:
+            zh: Release 名称。
+        kind:
+          type: string
+          description: Object kind (must be "Pod").
+          descriptions:
+            zh: 对象 kind（必须为 "Pod"）。
+        name:
+          type: string
+          description: Object (pod) name.
+          descriptions:
+            zh: 对象（pod）名称。
+        tail:
+          type: integer
+          description: Number of trailing lines (default 200).
+          descriptions:
+            zh: 末尾行数（默认 200）。
+        previous:
+          type: boolean
+          description: Read the PREVIOUS (crashed) container instance.
+          descriptions:
+            zh: 读取上一个（崩溃的）容器实例。
+        container:
+          type: string
+          description: Container name (empty = the pod's first container).
+          descriptions:
+            zh: 容器名（空 = pod 的第一个容器）。
+      required:
+        - release
+        - kind
+        - name
+    required_config:
+      - gateway-url
+      - gateway-token
   - name: pvc-create
     description: "Create a named, tenant-owned PersistentVolumeClaim (admin) for service data. Services mount it by name via service-deploy `volumes`. Uses the deployment storage class (self-hosted local-path -> /home/develop/PVC on the host). NOTE: local-path does not enforce `size`; a fresh PVC stays Pending until a service mounts it."
     descriptions:

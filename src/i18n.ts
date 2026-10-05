@@ -286,6 +286,22 @@ export const CATALOG = {
     en: "Helm release '{release}' not found.",
     zh: "未找到 Helm release '{release}'。",
   },
+  helmObjectsHeader: {
+    en: "Release '{release}' objects: {count}",
+    zh: "Release '{release}' 对象：{count}",
+  },
+  helmObjectsNone: {
+    en: "Release '{release}' has no objects.",
+    zh: "Release '{release}' 没有对象。",
+  },
+  helmObjectLogsHeader: {
+    en: "Logs for '{name}': {count} lines",
+    zh: "'{name}' 的日志：{count} 行",
+  },
+  helmObjectLogsUnavailable: {
+    en: "No log for '{name}': {reason}",
+    zh: "'{name}' 无日志：{reason}",
+  },
   helmSlotLine: {
     en: "Slot {slot}: {ready} ({count}){active}",
     zh: "槽位 {slot}：{ready}（{count}）{active}",

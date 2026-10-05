@@ -115,6 +115,8 @@ import {
   helmRollback,
   helmRollbackRelease,
   helmUninstall,
+  helmObjects,
+  helmObjectLogs,
   type HelmCtx,
 } from './tools/helm.js'
 
@@ -547,6 +549,8 @@ export function createWorkspaceConfig(
     'helm-uninstall': helmWrap(helmUninstall),
     'helm-promote': helmWrap(helmPromote),
     'helm-rollback-release': helmWrap(helmRollbackRelease),
+    'helm-objects': helmWrap(helmObjects),
+    'helm-object-logs': helmWrap(helmObjectLogs),
     'pvc-create': pvcWrap(pvcCreate),
     'pvc-list': pvcWrap(pvcList),
     'pvc-delete': pvcWrap(pvcDelete),
