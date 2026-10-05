@@ -86,6 +86,13 @@ export class Xa11yPlatform implements Platform {
   constructor(
     private readonly client: WorkerClient,
     readonly id: 'linux' | 'windows' | 'macos',
+    /**
+     * The worker's display server (`info.capabilities.display`): `x11`,
+     * `wayland`, or '' when unknown. On a Wayland sandbox the xa11y screenshot
+     * path (xdg-desktop-portal) is unavailable, so we capture with `grim`
+     * instead — the AT-SPI tree/action/input paths are identical.
+     */
+    private readonly display: string = '',
   ) {}
 
   /** Temp path for a screenshot; the OS's native separator is irrelevant to
@@ -212,6 +219,22 @@ export class Xa11yPlatform implements Platform {
   ): Promise<{ path: string; width: number; height: number }> {
     const path = this.shotPath()
     const regionFlag = region === '' ? '' : ` --region ${shq(region)}`
+    // Wayland (e.g. the labwc desktop image): xa11y's screenshot uses
+    // xdg-desktop-portal, which a headless compositor does not provide. Capture
+    // the compositor output with grim instead (the image ships it).
+    if (this.display === 'wayland' && this.id === 'linux') {
+      const grimCmd =
+        region === ''
+          ? `grim ${path} || grim -o "$(wlr-randr --json 2>/dev/null | sed -n 's/.*"name": *"\\([^"]*\\)".*/\\1/p' | head -1)" ${path}`
+          : `grim -g ${shq(region)} ${path}`
+      const gres = await runChecked(this.client, grimCmd, { timeoutMs: 30_000 })
+      const m = gres.stdout.match(/(\d+)\s*x\s*(\d+)/)
+      return {
+        path,
+        width: m !== null ? Number(m[1]) : 0,
+        height: m !== null ? Number(m[2]) : 0,
+      }
+    }
     const res = await runChecked(
       this.client,
       `xa11y screenshot${regionFlag} --out ${path}`,
