@@ -32,10 +32,14 @@ export function detectPlatform(os: string): PlatformId {
 }
 
 /** Build the `Platform` driver for a detected platform id. */
-export function createPlatform(client: WorkerClient, id: PlatformId): Platform {
+export function createPlatform(
+  client: WorkerClient,
+  id: PlatformId,
+  display = '',
+): Platform {
   return id === 'android'
     ? new AndroidPlatform(client)
-    : new Xa11yPlatform(client, id)
+    : new Xa11yPlatform(client, id, display)
 }
 
 /**
@@ -57,7 +61,7 @@ export async function probeTarget(
   locale: string,
 ): Promise<SandboxTarget> {
   let os = ''
-  let caps: { xa11y: boolean } | undefined
+  let caps: { xa11y: boolean; display?: string } | undefined
   try {
     const info = await client.info({})
     os = info.os
@@ -66,7 +70,7 @@ export async function probeTarget(
     os = ''
   }
   const id = detectPlatform(os)
-  const platform = createPlatform(client, id)
+  const platform = createPlatform(client, id, caps?.display ?? '')
 
   if (id !== 'android' && caps !== undefined && !caps.xa11y) {
     throw new TypedToolError('not_found', tr(locale, 'a11yMissing', { sandbox }))
