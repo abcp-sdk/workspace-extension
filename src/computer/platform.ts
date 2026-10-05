@@ -73,6 +73,17 @@ function coord(n: number): number {
   return Math.round(n)
 }
 
+/**
+ * Translate the tool's documented region (`x,y,w,h`) into grim's `-g` geometry
+ * (`WxH+X+Y`). grim rejects `x,y,w,h`; a region that is already in grim's form
+ * is passed through unchanged. An unparseable value is returned as-is so the
+ * command fails loudly rather than capturing the wrong area.
+ */
+export function grimRegion(region: string): string {
+  const m = region.trim().match(/^(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)$/)
+  return m === null ? region : `${m[3]}x${m[4]}+${m[1]}+${m[2]}`
+}
+
 // ---------------------------------------------------------------------------
 // Desktop (Linux X11/AT-SPI2, Windows UI Automation, macOS AXUIElement) via
 // the `xa11y` CLI.
@@ -226,7 +237,7 @@ export class Xa11yPlatform implements Platform {
       const grimCmd =
         region === ''
           ? `grim ${path} || grim -o "$(wlr-randr --json 2>/dev/null | sed -n 's/.*"name": *"\\([^"]*\\)".*/\\1/p' | head -1)" ${path}`
-          : `grim -g ${shq(region)} ${path}`
+          : `grim -g ${shq(grimRegion(region))} ${path}`
       const gres = await runChecked(this.client, grimCmd, { timeoutMs: 30_000 })
       const m = gres.stdout.match(/(\d+)\s*x\s*(\d+)/)
       return {
