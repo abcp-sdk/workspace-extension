@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { TypedToolError } from '@abc-protocol/sdk'
 import type { WorkerClient } from '../src/client.js'
 import { detectPlatform, probeTarget } from '../src/computer/target.js'
-import { Xa11yPlatform } from '../src/computer/platform.js'
+import { grimRegion, Xa11yPlatform } from '../src/computer/platform.js'
 import { apps as cuApps, screenshot as cuScreenshot } from '../src/computer/tools.js'
 import type { ToolCtx } from '../src/computer/tools.js'
 
@@ -117,6 +117,37 @@ describe('Xa11yPlatform command construction', () => {
     const p = new Xa11yPlatform(client, 'windows')
     await p.action('press', 'button[name="OK"]', '', 'My App')
     expect(seen).toBe("xa11y action 'press' 'button[name=\"OK\"]' --app 'My App'")
+  })
+
+  it('uses grim (not xa11y) for a Wayland Linux screenshot', async () => {
+    let seen = ''
+    const client = fakeWorker({
+      onExecute: c => (seen = c),
+      outputs: { 'grim /tmp/cu-shot.png || grim -o "$(wlr-randr --json 2>/dev/null | sed -n \'s/.*"name": *"\\([^"]*\\)".*/\\1/p\' | head -1)" /tmp/cu-shot.png': '' },
+    })
+    const p = new Xa11yPlatform(client, 'linux', 'wayland')
+    await p.screenshot('')
+    expect(seen).toContain('grim ')
+    expect(seen).not.toContain('xa11y screenshot')
+  })
+
+  it('passes a region to grim in its WxH+X+Y geometry', async () => {
+    let seen = ''
+    const client = fakeWorker({ onExecute: c => (seen = c) })
+    const p = new Xa11yPlatform(client, 'linux', 'wayland')
+    await p.screenshot('10,20,300,200')
+    expect(seen).toBe("grim -g '300x200+10+20' /tmp/cu-shot.png")
+  })
+})
+
+describe('grimRegion', () => {
+  it('converts x,y,w,h to WxH+X+Y', () => {
+    expect(grimRegion('10,20,300,200')).toBe('300x200+10+20')
+    expect(grimRegion('0, 0, 1280, 720')).toBe('1280x720+0+0')
+  })
+  it('passes through an already-grim value (or an unparseable one)', () => {
+    expect(grimRegion('300x200+10+20')).toBe('300x200+10+20')
+    expect(grimRegion('nonsense')).toBe('nonsense')
   })
 })
 
