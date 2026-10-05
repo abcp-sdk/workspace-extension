@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { helmDeploy, helmHistory, helmList, helmPromote, helmRollback, helmRollbackRelease, helmUninstall, type HelmCtx } from '../src/tools/helm.js'
+import { helmDeploy, helmHistory, helmList, helmPromote, helmRollback, helmRollbackRelease, helmUninstall, helmObjects, helmObjectLogs, type HelmCtx } from '../src/tools/helm.js'
 
 function ctx() {
   const calls: Record<string, unknown[]> = { deploy: [], rollback: [], uninstall: [], list: [], history: [] }
@@ -101,5 +101,68 @@ describe('helm blue-green', () => {
     const { c } = slotCtx()
     const res = await helmRollbackRelease(c, { release: 'web' })
     expect(res.data).toMatchObject({ active_slot: 'blue' })
+  })
+})
+
+describe('helm objects / logs', () => {
+  function objCtx() {
+    const calls: Record<string, unknown[]> = { objects: [], logs: [] }
+    const c = {
+      workspace: {
+        async helmObjects(r: unknown) {
+          calls.objects.push(r)
+          return {
+            objects: [
+              { kind: 'Deployment', name: 'web', namespace: 'ns', status: 'Progressing', ready: false, message: 'CrashLoopBackOff', phase: 'Running', restarts: 5, readyReplicas: 0, desiredReplicas: 2 },
+              { kind: 'Service', name: 'web', namespace: 'ns', status: 'Ready', ready: true, readyReplicas: 0, desiredReplicas: 0 },
+            ],
+          }
+        },
+        async helmObjectLogs(r: unknown) {
+          calls.logs.push(r)
+          return { lines: ['l1', 'l2'], available: true, message: '' }
+        },
+      },
+      session: 't:r:b',
+      locale: 'en',
+    } as unknown as HelmCtx
+    return { c, calls }
+  }
+
+  it('helm-objects lists live object status', async () => {
+    const { c, calls } = objCtx()
+    const res = await helmObjects(c, { release: 'web' })
+    expect(calls.objects[0]).toMatchObject({ release: 'web' })
+    expect(String(res.content)).toContain('CrashLoopBackOff')
+    expect(res.data).toMatchObject({ release: 'web' })
+  })
+
+  it('helm-objects requires release', async () => {
+    const { c } = objCtx()
+    await expect(helmObjects(c, {})).rejects.toThrow(/release/)
+  })
+
+  it('helm-object-logs forwards tail/previous and reports lines', async () => {
+    const { c, calls } = objCtx()
+    const res = await helmObjectLogs(c, { release: 'web', kind: 'Pod', name: 'web-0', tail: 50, previous: true })
+    expect(calls.logs[0]).toMatchObject({ release: 'web', kind: 'Pod', name: 'web-0', tailLines: 50n, previous: true })
+    expect(res.data).toMatchObject({ available: true })
+    expect(String(res.content)).toContain('l1')
+  })
+
+  it('helm-object-logs requires release/kind/name', async () => {
+    const { c } = objCtx()
+    await expect(helmObjectLogs(c, { kind: 'Pod', name: 'x' })).rejects.toThrow(/release/)
+    await expect(helmObjectLogs(c, { release: 'web', name: 'x' })).rejects.toThrow(/kind/)
+  })
+
+  it('helm-object-logs reports unavailable', async () => {
+    const c = {
+      workspace: { async helmObjectLogs() { return { lines: [], available: false, message: 'no such pod' } } },
+      session: 't',
+      locale: 'en',
+    } as unknown as HelmCtx
+    const res = await helmObjectLogs(c, { release: 'web', kind: 'Pod', name: 'web-0' })
+    expect(res.data).toMatchObject({ available: false, message: 'no such pod' })
   })
 })
