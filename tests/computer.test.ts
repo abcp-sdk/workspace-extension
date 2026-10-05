@@ -1,50 +1,30 @@
 import { describe, expect, it } from 'vitest'
-import { TypedToolError } from '@abc-protocol/sdk'
-import type { WorkerClient } from '../src/client.js'
+import type { ComputerClient } from '../src/client.js'
 import { detectPlatform, probeTarget } from '../src/computer/target.js'
-import { grimRegion, Xa11yPlatform } from '../src/computer/platform.js'
 import { apps as cuApps, screenshot as cuScreenshot } from '../src/computer/tools.js'
 import type { ToolCtx } from '../src/computer/tools.js'
 
-/**
- * A worker stub that records every Execute command and answers jobWait /
- * jobOutput / fileRead from scripted tables. `info` reports the OS and the
- * probed capabilities.
- */
-function fakeWorker(opts: {
-  os?: string
-  capabilities?: Record<string, unknown>
-  outputs?: Record<string, string>
-  onExecute?: (command: string) => void
-  readContent?: Uint8Array
-} = {}): WorkerClient {
-  const outputs = opts.outputs ?? {}
-  return {
-    info: async () => ({
-      os: opts.os ?? 'linux',
-      arch: 'amd64',
-      shell: 'builtin(mvdan-sh)',
-      workspace: '/root/workspace',
-      home: '/root',
-      bootId: 'b',
-      ...(opts.capabilities !== undefined ? { capabilities: opts.capabilities } : {}),
-    }),
-    execute: async ({ command }: { command: string }) => {
-      opts.onExecute?.(command)
-      return { jobId: command }
-    },
-    jobWait: async ({ jobId }: { jobId: string }) => ({
-      state: 'done',
-      exitCode: 0,
-      // carry the command through so jobOutput can look up its scripted output
-      _job: jobId,
-    }),
-    jobOutput: async ({ jobId }: { jobId: string }) => {
-      const text = outputs[jobId] ?? ''
-      return { lines: text === '' ? [] : text.split('\n'), totalLines: 1, startLine: 0, endLine: 1, done: true }
-    },
-    fileRead: async () => ({ content: opts.readContent ?? new Uint8Array(), totalLines: 0, startLine: 0, endLine: 0 }),
-  } as unknown as WorkerClient
+/** A ComputerService stub recording the calls the tools make. */
+function fakeComputer(over: Partial<Record<string, unknown>> = {}): {
+  client: ComputerClient
+  calls: string[]
+} {
+  const calls: string[] = []
+  const client = {
+    info: async () => ({ platform: 'linux-x11', display: 'x11', tools: ['xa11y'] }),
+    apps: async () => ({ apps: [{ pid: '123', name: 'zenity', focused: true }, { pid: '456', name: 'gedit', focused: false }] }),
+    snapshot: async (r: { app: string; depth: number }) => { calls.push(`snapshot:${r.app}:${r.depth}`); return { text: 'tree' } },
+    find: async (r: { selector: string; app: string; output: string }) => { calls.push(`find:${r.selector}:${r.app}:${r.output}`); return { text: 'match' } },
+    action: async (r: { action: string; target: string; value: string; app: string }) => { calls.push(`action:${r.action}:${r.target}:${r.value}:${r.app}`); return { ok: true } },
+    click: async (r: { x: number; y: number; button: string; count: number }) => { calls.push(`click:${r.x}:${r.y}:${r.button}:${r.count}`); return { ok: true } },
+    type: async (r: { text: string; target: string }) => { calls.push(`type:${r.text}:${r.target}`); return { ok: true } },
+    key: async (r: { key: string; held: string[] }) => { calls.push(`key:${r.key}:${r.held.join(',')}`); return { ok: true } },
+    scroll: async (r: { x: number; y: number; dx: number; dy: number }) => { calls.push(`scroll:${r.x}:${r.y}:${r.dx}:${r.dy}`); return { ok: true } },
+    drag: async (r: { fromX: number; fromY: number; toX: number; toY: number; durationMs: number }) => { calls.push(`drag:${r.fromX}:${r.fromY}:${r.toX}:${r.toY}:${r.durationMs}`); return { ok: true } },
+    screenshot: async (r: { region: string }) => { calls.push(`shot:${r.region}`); return { png: new Uint8Array([0x89, 0x50, 0x4e, 0x47]), width: 800, height: 600 } },
+    ...over,
+  } as unknown as ComputerClient
+  return { client, calls }
 }
 
 describe('detectPlatform', () => {
@@ -58,100 +38,27 @@ describe('detectPlatform', () => {
   })
 })
 
-describe('probeTarget gating', () => {
-  it('refuses immediately when the worker reports xa11y=false (no command run)', async () => {
-    let ran = 0
-    const client = fakeWorker({
-      capabilities: { desktop: false, display: '', novnc: false, novncPort: 0, xa11y: false, distro: 'debian' },
-      onExecute: () => {
-        ran++
-      },
-    })
+describe('probeTarget gating (ComputerService)', () => {
+  it('passes when ComputerService.Info resolves', async () => {
+    const t = await probeTarget(fakeComputer().client, 'w1', 'en')
+    expect(t.sandbox).toBe('w1')
+  })
+
+  it('throws not_found when ComputerService.Info fails', async () => {
+    const client = fakeComputer({ info: async () => { throw new Error('unimplemented') } }).client
     const e = await probeTarget(client, 'w1', 'en').catch(x => x)
-    expect((e as TypedToolError).code).toBe('not_found')
+    expect((e as { code: string }).code).toBe('not_found')
     expect(String(e)).toContain('w1')
-    expect(ran).toBe(0) // capabilities gate short-circuits before any Execute
   })
 
-  it('accepts a desktop sandbox that reports xa11y=true (probe runs and passes)', async () => {
-    const client = fakeWorker({
-      capabilities: { desktop: true, display: 'x11', novnc: true, novncPort: 6080, xa11y: true, distro: 'debian' },
-      outputs: { 'command -v xa11y': '/usr/local/bin/xa11y' },
-    })
-    const t = await probeTarget(client, 'w1', 'en')
-    expect(t.platform.id).toBe('linux')
-  })
-
-  it('falls back to a CLI probe when the worker does not report capabilities', async () => {
-    const client = fakeWorker({ outputs: { 'command -v xa11y': '/usr/bin/xa11y' } })
-    const t = await probeTarget(client, 'w1', 'en')
-    expect(t.platform.id).toBe('linux')
-  })
-
-  it('refuses when the fallback CLI probe finds nothing', async () => {
-    const client = fakeWorker({ outputs: {} })
+  it('refuses a sandbox with no GUI tools (plain sandbox-<lang>)', async () => {
+    const client = fakeComputer({ info: async () => ({ platform: 'linux', display: '', tools: [] }) }).client
     const e = await probeTarget(client, 'w1', 'en').catch(x => x)
-    expect((e as TypedToolError).code).toBe('not_found')
-  })
-
-  it('gates Android on adb, not xa11y', async () => {
-    // capabilities absent, os=android: probe runs `adb ... getprop`
-    const client = fakeWorker({ os: 'android', outputs: { 'adb -s emulator-5554 wait-for-device shell getprop sys.boot_completed': '1' } })
-    const t = await probeTarget(client, 'a1', 'en')
-    expect(t.platform.id).toBe('android')
+    expect((e as { code: string }).code).toBe('not_found')
   })
 })
 
-describe('Xa11yPlatform command construction', () => {
-  it('builds an `xa11y tree` command with app + depth flags', async () => {
-    let seen = ''
-    const client = fakeWorker({ onExecute: c => (seen = c), outputs: {} })
-    const p = new Xa11yPlatform(client, 'linux')
-    await p.snapshot('zenity', 3)
-    expect(seen).toBe("xa11y tree --app 'zenity' --depth 3")
-  })
-
-  it('quotes the app name so a space cannot break the command', async () => {
-    let seen = ''
-    const client = fakeWorker({ onExecute: c => (seen = c) })
-    const p = new Xa11yPlatform(client, 'windows')
-    await p.action('press', 'button[name="OK"]', '', 'My App')
-    expect(seen).toBe("xa11y action 'press' 'button[name=\"OK\"]' --app 'My App'")
-  })
-
-  it('uses grim (not xa11y) for a Wayland Linux screenshot', async () => {
-    let seen = ''
-    const client = fakeWorker({
-      onExecute: c => (seen = c),
-      outputs: { 'grim /tmp/cu-shot.png || grim -o "$(wlr-randr --json 2>/dev/null | sed -n \'s/.*"name": *"\\([^"]*\\)".*/\\1/p\' | head -1)" /tmp/cu-shot.png': '' },
-    })
-    const p = new Xa11yPlatform(client, 'linux', 'wayland')
-    await p.screenshot('')
-    expect(seen).toContain('grim ')
-    expect(seen).not.toContain('xa11y screenshot')
-  })
-
-  it('passes a region to grim in its WxH+X+Y geometry', async () => {
-    let seen = ''
-    const client = fakeWorker({ onExecute: c => (seen = c) })
-    const p = new Xa11yPlatform(client, 'linux', 'wayland')
-    await p.screenshot('10,20,300,200')
-    expect(seen).toBe("grim -g '300x200+10+20' /tmp/cu-shot.png")
-  })
-})
-
-describe('grimRegion', () => {
-  it('converts x,y,w,h to WxH+X+Y', () => {
-    expect(grimRegion('10,20,300,200')).toBe('300x200+10+20')
-    expect(grimRegion('0, 0, 1280, 720')).toBe('1280x720+0+0')
-  })
-  it('passes through an already-grim value (or an unparseable one)', () => {
-    expect(grimRegion('300x200+10+20')).toBe('300x200+10+20')
-    expect(grimRegion('nonsense')).toBe('nonsense')
-  })
-})
-
-describe('computer tools', () => {
+describe('computer tools (thin proxy)', () => {
   const ctx: ToolCtx = {
     deps: { ingestFile: async () => ({ code: 'abc123', mime: 'image/png' }) } as unknown as ToolCtx['deps'],
     locale: 'en',
@@ -159,21 +66,24 @@ describe('computer tools', () => {
     session: 'o:r:b',
   }
 
-  it('apps parses `pid\\tname[\\tfocused]` lines', async () => {
-    const client = fakeWorker({ outputs: { 'xa11y apps': '123\tzenity\tfocused\n456\tgedit' } })
-    const t = await probeTarget(fakeWorker({ capabilities: { xa11y: true }, outputs: { 'xa11y apps': '123\tzenity\tfocused\n456\tgedit', 'command -v xa11y': '/x' } }), 'w1', 'en')
-    // use the scripted worker directly for the call
-    const target = { ...t, platform: new Xa11yPlatform(client, 'linux') }
-    const r = await cuApps(ctx, target)
+  it('apps lists the worker ComputerService apps', async () => {
+    const { client } = fakeComputer()
+    const r = await cuApps(ctx, { sandbox: 'w1', client })
     expect(r.data).toMatchObject({ apps: [{ pid: '123', name: 'zenity', focused: true }, { pid: '456', name: 'gedit', focused: false }] })
+    expect(String(r.content)).toContain('123\tzenity\tfocused')
   })
 
-  it('screenshot ingests the PNG through the agent and returns file:<code>', async () => {
-    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
-    const client = fakeWorker({ outputs: { 'xa11y screenshot --out /tmp/cu-shot.png': 'wrote /tmp/cu-shot.png (800x600 @1x)' }, readContent: png })
-    const target = { sandbox: 'w1', platform: new Xa11yPlatform(client, 'linux'), client }
-    const r = await cuScreenshot(ctx, target, {})
+  it('screenshot ingests the PNG bytes from the worker and returns file:<code>', async () => {
+    const { client, calls } = fakeComputer()
+    const r = await cuScreenshot(ctx, { sandbox: 'w1', client }, { region: '10,20,300,200' })
+    expect(calls[0]).toBe('shot:10,20,300,200')
     expect(String(r.content)).toContain('file:abc123')
     expect(r.data).toMatchObject({ files: [{ code: 'abc123', mime: 'image/png', width: 800, height: 600 }] })
+  })
+
+  it('screenshot fails when the PNG is empty', async () => {
+    const { client } = fakeComputer({ screenshot: async () => ({ png: new Uint8Array(), width: 0, height: 0 }) })
+    const e = await cuScreenshot(ctx, { sandbox: 'w1', client }, {}).catch(x => x)
+    expect((e as { code: string }).code).toBe('retryable')
   })
 })

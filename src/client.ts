@@ -3,10 +3,14 @@ import { Code, createClient } from '@connectrpc/connect'
 import { createConnectTransport } from '@connectrpc/connect-node'
 import { TypedToolError } from '@abc-protocol/sdk'
 import { WorkerService } from './gen/worker/v1/worker_pb.js'
+import { ComputerService } from './gen/worker/v1/computer_pb.js'
 import { BranchSessionService } from './gen/workspace/v1/workspace_pb.js'
 
 /** A worker.v1 Connect client. */
 export type WorkerClient = Client<typeof WorkerService>
+
+/** A worker.v1 ComputerService Connect client (native GUI automation). */
+export type ComputerClient = Client<typeof ComputerService>
 
 /**
  * A workspace.v1 Connect client. The workspace GATEWAY owns the sandbox
@@ -46,6 +50,16 @@ export function createWorkerClient(ep: WorkerEndpoint): WorkerClient {
     interceptors: [bearerInterceptor(ep.token)],
   })
   return createClient(WorkerService, transport)
+}
+
+/** Build a bearer-authenticated ComputerService client (h1). */
+export function createComputerClient(ep: WorkerEndpoint): ComputerClient {
+  const transport = createConnectTransport({
+    baseUrl: normalizeUrl(ep.url),
+    httpVersion: '1.1',
+    interceptors: [bearerInterceptor(ep.token)],
+  })
+  return createClient(ComputerService, transport)
 }
 
 /** Build a bearer-authenticated workspace-gateway client (h1).
