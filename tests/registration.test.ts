@@ -100,6 +100,8 @@ const EXPECTED_TOOLS = [
   'helm-uninstall',
   'helm-promote',
   'helm-rollback-release',
+  'helm-objects',
+  'helm-object-logs',
   'repo-create-org',
   'repo-create-repo',
   'repo-diff',
