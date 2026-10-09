@@ -9,7 +9,7 @@ npm install
 npm run check          # tsc --noEmit
 npm test               # vitest run (needs nats-server on PATH or ABC_NATS_SERVER_BIN)
 npm run build          # tsc --emitDeclarationOnly + esbuild -> dist/main.js
-./build-image.sh       # buildkitd -> forgejo OCI (in-cluster only; see below)
+./build-image.sh       # buildkitd -> artifact OCI (in-cluster only; see below)
 ```
 
 `npm test` needs a real `nats-server` binary: `tests/registration.test.ts` boots
