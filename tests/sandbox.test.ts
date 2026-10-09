@@ -124,6 +124,33 @@ describe('sandbox-create', () => {
     expect(got['disk']).toBe('')
   })
 
+  it('parses `volumes` into the gateway VolumeMountSpec shape', async () => {
+    let got: Record<string, unknown> = {}
+    const mgr = fakeManager({
+      createSandbox: async (req: Record<string, unknown>) => {
+        got = req
+        return { sandbox: { name: 'w1', image: 'img', phase: 'Running', ready: true, url: 'http://w1:48080', creator: 't', createdAt: 1n } }
+      },
+    })
+    await sandboxCreate(ctx(mgr), {
+      name: 'w1',
+      volumes: [
+        { pvc: 'data', 'mount-path': '/data', 'read-only': true, 'sub-path': 'sub' },
+        { pvc: 'cache', mountPath: '/cache', readOnly: false }, // camelCase + no sub-path
+        { pvc: 'x' }, // no mount-path -> dropped
+        { 'mount-path': '/y' }, // no pvc -> dropped
+        'nope', // not an object -> dropped
+      ],
+    })
+    expect(got['volumes']).toEqual([
+      { pvc: 'data', mountPath: '/data', readOnly: true, subPath: 'sub' },
+      { pvc: 'cache', mountPath: '/cache', readOnly: false, subPath: '' },
+    ])
+    // Omitted volumes -> empty list (not undefined).
+    await sandboxCreate(ctx(mgr), { name: 'w2' })
+    expect(got['volumes']).toEqual([])
+  })
+
   it('runs autoCheckout and appends its note when provided', async () => {
     const c: SandboxCtx = {
       workspace: fakeManager(),
