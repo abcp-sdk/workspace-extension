@@ -234,6 +234,14 @@ export const CATALOG = {
     en: 'service-deploy failed: {err}',
     zh: 'service-deploy 失败：{err}',
   },
+  serviceExists: {
+    en: "a service named '{name}' already exists; use service-update to change it.",
+    zh: "名为 '{name}' 的服务已存在；请用 service-update 修改。",
+  },
+  serviceNotExists: {
+    en: "no service named '{name}'; use service-create to create it.",
+    zh: "不存在名为 '{name}' 的服务；请用 service-create 创建。",
+  },
   helmRendered: {
     en: "Rendered release '{release}' ({count} objects):",
     zh: "已渲染 release '{release}'（{count} 个对象）：",

@@ -119,6 +119,44 @@ export async function serviceDeploy(
   }
 }
 
+/**
+ * `service-create`: create a NEW long-lived service. Like `service-deploy`, but
+ * refuses when a service of that name already exists (use `service-update` to
+ * change an existing one, or `service-deploy` to upsert). Same gateway RPC.
+ */
+export async function serviceCreate(ctx: ServiceCtx, args: Record<string, unknown>): Promise<ToolResultData> {
+  const name = strArg(args, 'name')
+  if (name === '') throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'name' }))
+  if (await serviceExists(ctx, name)) {
+    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'serviceExists', { name }))
+  }
+  return serviceDeploy(ctx, args)
+}
+
+/**
+ * `service-update`: change an EXISTING service (image/env/replicas/...). Refuses
+ * when the service does not exist (use `service-create` for a new one). Same
+ * gateway RPC (deploy is an upsert); this tool only adds the existence guard.
+ */
+export async function serviceUpdate(ctx: ServiceCtx, args: Record<string, unknown>): Promise<ToolResultData> {
+  const name = strArg(args, 'name')
+  if (name === '') throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'name' }))
+  if (!(await serviceExists(ctx, name))) {
+    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'serviceNotExists', { name }))
+  }
+  return serviceDeploy(ctx, args)
+}
+
+/** serviceExists reports whether a service of that name is visible to the caller. */
+async function serviceExists(ctx: ServiceCtx, name: string): Promise<boolean> {
+  try {
+    const res = await ctx.workspace.listServices({})
+    return (res.services ?? []).some(s => s.name === name)
+  } catch {
+    return false
+  }
+}
+
 /** `service-rollback`: roll a service's Deployment back to a prior revision (k8s rollout undo). */
 export async function serviceRollback(
   ctx: ServiceCtx,
