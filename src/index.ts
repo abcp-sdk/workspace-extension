@@ -91,7 +91,7 @@ import {
   sandboxStatus,
   type SandboxCtx,
 } from './tools/sandbox.js'
-import { ociImport, repoBuildImage, repoBuildStatus, type BuildCtx } from './tools/imagebuild.js'
+import { ociImport, repoBuildCancel, repoBuildImage, repoBuildStatus, type BuildCtx } from './tools/imagebuild.js'
 import {
   serviceDelete,
   serviceDeploy,
@@ -118,7 +118,7 @@ import {
 } from './tools/helm.js'
 
 export const EXT_ID = 'workspace'
-export const EXT_VERSION = '0.21.0'
+export const EXT_VERSION = '0.22.0'
 
 /** Config names (re-exported for tests). */
 export const CONFIG_MANAGER_URL = CONFIG.gatewayUrl
@@ -529,6 +529,7 @@ export function createWorkspaceConfig(
     'repo-delete-push-mirror': repoWrap(repoDeletePushMirror),
     'repo-build-image': buildWrap(repoBuildImage),
     'repo-build-status': buildWrap(repoBuildStatus),
+    'repo-build-cancel': buildWrap(repoBuildCancel),
     'oci-import': buildWrap(ociImport),
     'repo-mail-send': mailWrap(repoMailSend),
 

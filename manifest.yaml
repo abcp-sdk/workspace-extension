@@ -2,7 +2,7 @@
 # schemas, required_config). Handlers (execute) live in src/index.ts; the SDK's
 # parseManifest/manifestConfig joins the two, exactly like the other extensions.
 id: workspace
-version: 0.21.0
+version: 0.22.0
 tools:
   - name: sandbox-create
     description: 'Create a sandbox and wait up to 60s for it to become healthy. A sandbox runs a PRE-BUILT image that already bundles the worker — the gateway no longer injects anything. `image` must be one of the deployment sandbox images from the dedicated sandbox org (see list-oci-images with owner="sandbox"); omit it for the deployment default. A name is never reused: if a sandbox with this name already exists the call is refused — delete it first with sandbox-delete. Returns the sandbox name, its in-cluster service DNS, and the worker environment (OS/arch, workspace root, boot id).'
@@ -1333,6 +1333,23 @@ tools:
     description: "Poll a background image build started by repo-build-image. Returns its state (running|done|failed), the pushed image ref (on done) and the build log."
     descriptions:
       zh: 轮询由 repo-build-image 启动的后台镜像构建，返回状态（running|done|failed）、（完成时的）已推送镜像引用与构建日志。
+    input_schema:
+      type: object
+      properties:
+        build-id:
+          type: string
+          description: The build id returned by repo-build-image.
+          descriptions:
+            zh: repo-build-image 返回的 build id。
+      required:
+        - build-id
+    required_config:
+      - gateway-url
+      - gateway-token
+  - name: repo-build-cancel
+    description: "Abort a running background image build (started by repo-build-image). Cancels the buildkit process; the build becomes failed. Idempotent."
+    descriptions:
+      zh: 中止正在运行的后台镜像构建（由 repo-build-image 启动）。会终止 buildkit 进程，构建变为 failed。幂等。
     input_schema:
       type: object
       properties:

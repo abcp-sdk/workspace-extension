@@ -362,6 +362,18 @@ export const CATALOG = {
     en: "Build {id}: {state}.",
     zh: "构建 {id}：{state}。",
   },
+  buildCanceled: {
+    en: "Canceled build {id}.",
+    zh: "已取消构建 {id}。",
+  },
+  buildNotRunning: {
+    en: "Build {id} is not running (already finished or unknown); nothing to cancel.",
+    zh: "构建 {id} 未在运行（已完成或未知）；无需取消。",
+  },
+  buildCancelFailed: {
+    en: "Failed to cancel build {id}: {err}",
+    zh: "取消构建 {id} 失败：{err}",
+  },
   imageBuildFailed: {
     en: "Failed to build image '{image}': {err}",
     zh: "构建镜像 '{image}' 失败：{err}",
