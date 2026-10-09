@@ -222,25 +222,9 @@ export const CATALOG = {
     en: "Public URL (anonymous): {url}",
     zh: "公开地址（匿名可访问）：{url}",
   },
-  serviceSlotLine: {
-    en: "Slot {slot}: {url}{active}",
-    zh: "槽位 {slot}：{url}{active}",
-  },
-  serviceSlotInvalid: {
-    en: "slot must be 'blue' or 'green'",
-    zh: "slot 必须为 'blue' 或 'green'。",
-  },
-  servicePromoted: {
-    en: "Promoted '{name}': the primary URL now targets the {slot} slot.",
-    zh: "已提升 '{name}'：主地址现指向 {slot} 槽位。",
-  },
-  servicePromoteFailed: {
-    en: "service-promote '{name}' failed: {err}",
-    zh: "service-promote '{name}' 失败：{err}",
-  },
   serviceRolledBack: {
-    en: "Rolled back '{name}': the primary URL now targets the {slot} slot.",
-    zh: "已回滚 '{name}'：主地址现指向 {slot} 槽位。",
+    en: "Rolled back '{name}' to revision {revision}.",
+    zh: "已将 '{name}' 回滚到 revision {revision}。",
   },
   serviceRollbackFailed: {
     en: "service-rollback '{name}' failed: {err}",
@@ -301,22 +285,6 @@ export const CATALOG = {
   helmObjectLogsUnavailable: {
     en: "No log for '{name}': {reason}",
     zh: "'{name}' 无日志：{reason}",
-  },
-  helmSlotLine: {
-    en: "Slot {slot}: {ready} ({count}){active}",
-    zh: "槽位 {slot}：{ready}（{count}）{active}",
-  },
-  helmSlotInvalid: {
-    en: "slot must be 'blue' or 'green'",
-    zh: "slot 必须为 'blue' 或 'green'。",
-  },
-  helmPromoted: {
-    en: "Promoted Helm release '{release}': the router now targets the {slot} slot.",
-    zh: "已提升 Helm release '{release}'：路由器现指向 {slot} 槽位。",
-  },
-  helmRolledBackSlot: {
-    en: "Rolled back Helm release '{release}': the router now targets the {slot} slot.",
-    zh: "已回滚 Helm release '{release}'：路由器现指向 {slot} 槽位。",
   },
   serviceNone: {
     en: 'No services.',
