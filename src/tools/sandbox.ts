@@ -147,6 +147,7 @@ export async function sandboxCreate(
       // `disk` (golden-disk URL) overrides the per-OS default; ignored on linux.
       os: strArg(args, 'os'),
       disk: strArg(args, 'disk'),
+      volumes: parseVolumes(args['volumes']),
     })
     const w = res.sandbox
     if (w === undefined) {
@@ -271,4 +272,26 @@ export async function sandboxDelete(
       : tr(ctx.locale, 'sandboxNotFound', { name, err: 'not found' }),
     data: { name, deleted: res.ok },
   }
+}
+
+/** Parse the `volumes` array into the gateway VolumeMountSpec shape (sandbox mounts). */
+function parseVolumes(
+  raw: unknown,
+): Array<{ pvc: string; mountPath: string; readOnly: boolean; subPath: string }> {
+  if (!Array.isArray(raw)) return []
+  const out: Array<{ pvc: string; mountPath: string; readOnly: boolean; subPath: string }> = []
+  for (const item of raw) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) continue
+    const o = item as Record<string, unknown>
+    const pvc = typeof o['pvc'] === 'string' ? o['pvc'] : ''
+    const mountPath = typeof o['mount-path'] === 'string' ? o['mount-path'] : typeof o['mountPath'] === 'string' ? o['mountPath'] : ''
+    if (pvc === '' || mountPath === '') continue
+    out.push({
+      pvc,
+      mountPath,
+      readOnly: o['read-only'] === true || o['readOnly'] === true,
+      subPath: typeof o['sub-path'] === 'string' ? o['sub-path'] : typeof o['subPath'] === 'string' ? o['subPath'] : '',
+    })
+  }
+  return out
 }
