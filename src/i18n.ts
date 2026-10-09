@@ -618,6 +618,10 @@ export const CATALOG = {
     en: 'the change set under `{path}` exceeds the {max} limit; submit fewer/smaller files (add generated or binary trees to .gitignore).',
     zh: '`{path}` 下的改动集超过 {max} 上限；请减少文件数量或体积（把生成物/二进制目录加进 .gitignore）。',
   },
+  submitTruncated: {
+    en: 'the directory listing under `{path}` was TRUNCATED (more than 10000 entries): refusing to submit, because a truncated listing would report the unseen files as deletions. Shrink the directory (add generated/vendor trees to .gitignore) or submit a smaller subtree.',
+    zh: '`{path}` 下的目录列表被截断（条目超过 10000）：拒绝提交——截断的列表会把未列出的文件误报为删除。请缩小该目录（把生成物/第三方目录加进 .gitignore）或提交更小的子树。',
+  },
   fanoutUpdated: {
     en: 'Synced the change into {count} sandbox(es) owned by this session.',
     zh: '已把该改动同步到本会话拥有的 {count} 个沙箱。',

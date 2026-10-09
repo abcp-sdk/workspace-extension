@@ -196,6 +196,16 @@ async function collectDir(ctx: BridgeCtx, sandboxDir: string): Promise<Collected
   const root = sandboxDir.replace(/\/+$/, '')
   const res = await ctx.client.fileList({ path: root, depth: 1000, limit: 10000 })
 
+  // The worker caps the listing (10000 entries) and reports it via `truncated`.
+  // Diffing a TRUNCATED listing would treat every base file we did not see as
+  // DELETED (a phantom mass deletion), so refuse outright.
+  if (res.truncated) {
+    throw new TypedToolError(
+      'invalid_argument',
+      tr(ctx.locale, 'submitTruncated', { path: sandboxDir }),
+    )
+  }
+
   // Build the .gitignore set from every `.gitignore` found under the root
   // (nested files override their ancestors). Each is read once.
   const igFiles = res.files.filter(e => {
