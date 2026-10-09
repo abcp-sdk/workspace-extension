@@ -59,6 +59,29 @@ tools:
             zh: 为 worker 容器附加的环境变量。
           additionalProperties:
             type: string
+        volumes:
+          type: array
+          description: PVCs to mount into the sandbox container (tenant-owned claims in the managed namespace, created via pvc-create). Each item {pvc, mount-path, read-only, sub-path}.
+          descriptions:
+            zh: 挂载进沙箱容器的 PVC（namespace 内、本租户所有，用 pvc-create 创建）。每项 {pvc, mount-path, read-only, sub-path}。
+          items:
+            type: object
+            properties:
+              pvc:
+                type: string
+                description: PVC name.
+              mount-path:
+                type: string
+                description: Absolute mount path inside the sandbox.
+              read-only:
+                type: boolean
+                description: Mount read-only (default false).
+              sub-path:
+                type: string
+                description: Optional sub-path within the volume.
+            required:
+              - pvc
+              - mount-path
       required:
         - name
     required_config:
