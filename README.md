@@ -178,7 +178,7 @@ npm install
 npm run build          # tsc declarations + esbuild -> dist/main.js
 npm run check          # tsc --noEmit
 npm test               # vitest (needs nats-server on PATH or ABC_NATS_SERVER_BIN)
-./build-image.sh       # buildkitd -> forgejo OCI
+./build-image.sh       # buildkitd -> artifact OCI (artifact.worker.svc.cluster.local)
 ```
 
 ## Serve
