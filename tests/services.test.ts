@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { serviceDeploy, serviceLogs, servicePromote, serviceRollback } from '../src/tools/services.js'
+import { serviceDeploy, serviceLogs, serviceRollback } from '../src/tools/services.js'
 import type { ServiceCtx } from '../src/tools/services.js'
 
 function serviceCtx() {
@@ -97,18 +97,14 @@ describe('service-deploy Tier 0', () => {
   })
 })
 
-describe('service-promote / service-rollback', () => {
-  function slotCtx() {
+describe('service-rollback', () => {
+  function rbCtx() {
     const calls: unknown[] = []
     const c = {
       workspace: {
-        async promoteService(r: unknown) {
-          calls.push(r)
-          return { service: { name: 'web', image: 'img:green', activeSlot: 'green', url: 'http://web:80', publicUrl: 'https://web.worker.d' } }
-        },
         async rollbackService(r: unknown) {
           calls.push(r)
-          return { service: { name: 'web', image: 'img:blue', activeSlot: 'blue', url: 'http://web:80', publicUrl: 'https://web.worker.d' } }
+          return { service: { name: 'web', image: 'img:blue', revision: 3n, url: 'http://web:80', publicUrl: 'https://web.worker.d' } }
         },
       },
       session: 't:r:b',
@@ -117,22 +113,21 @@ describe('service-promote / service-rollback', () => {
     return { c, calls }
   }
 
-  it('promotes and reports the new active slot', async () => {
-    const { c, calls } = slotCtx()
-    const res = await servicePromote(c, { name: 'web', force: true })
-    expect(calls[0]).toMatchObject({ name: 'web', force: true })
-    expect(res.data).toMatchObject({ active_slot: 'green', image: 'img:green' })
+  it('rolls back to a revision and reports it', async () => {
+    const { c, calls } = rbCtx()
+    const res = await serviceRollback(c, { name: 'web', revision: 3 })
+    expect(calls[0]).toMatchObject({ name: 'web', revision: 3 })
+    expect(res.data).toMatchObject({ revision: 3 })
   })
 
-  it('rolls back and reports the active slot', async () => {
-    const { c, calls } = slotCtx()
-    const res = await serviceRollback(c, { name: 'web' })
-    expect(calls[0]).toMatchObject({ name: 'web' })
-    expect(res.data).toMatchObject({ active_slot: 'blue' })
+  it('defaults revision to 0 (previous)', async () => {
+    const { c, calls } = rbCtx()
+    await serviceRollback(c, { name: 'web' })
+    expect(calls[0]).toMatchObject({ name: 'web', revision: 0 })
   })
 
   it('requires a name', async () => {
-    const { c } = slotCtx()
-    await expect(servicePromote(c, {})).rejects.toThrow(/name/)
+    const { c } = rbCtx()
+    await expect(serviceRollback(c, {})).rejects.toThrow(/name/)
   })
 })

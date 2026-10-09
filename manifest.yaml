@@ -1491,14 +1491,6 @@ tools:
             required:
               - pvc
               - mount-path
-        slot:
-          type: string
-          enum:
-            - blue
-            - green
-          description: Blue-green slot (default blue). Blue is the stable slot; green is the candidate. The primary URL always targets the ACTIVE slot; each slot also has its own address. Deploy green, verify it, then service-promote.
-          descriptions:
-            zh: 蓝绿槽位（默认 blue）。blue 为稳定槽；green 为候选槽。主地址始终指向当前 ACTIVE 槽；每个槽另有独立地址。先部署 green、验证后再 service-promote。
         resources:
           type: object
           description: Split resource requests/limits (overrides cpu/memory).
@@ -1891,32 +1883,10 @@ tools:
     required_config:
       - gateway-url
       - gateway-token
-  - name: service-promote
-    description: "Blue-green promotion: switch the service's primary URL to the non-active slot (blue<->green). By default the target slot must be fully ready; set force=true to override. Use after deploying and verifying the green slot. RollbackService switches back."
-    descriptions:
-      zh: 蓝绿提升：把服务主地址切到当前非 ACTIVE 的槽（blue<->green）。默认要求目标槽全部就绪；force=true 可强制。用于部署并验证 green 之后。service-rollback 可切回。
-    input_schema:
-      type: object
-      properties:
-        name:
-          type: string
-          description: Service name.
-          descriptions:
-            zh: 服务名。
-        force:
-          type: boolean
-          description: Promote even if the target slot is not fully ready.
-          descriptions:
-            zh: 即使目标槽未全部就绪也强制提升。
-      required:
-        - name
-    required_config:
-      - gateway-url
-      - gateway-token
   - name: service-rollback
-    description: "Blue-green rollback: switch the service's primary URL back to the other slot (the inverse of service-promote)."
+    description: "Roll back a service's Deployment to a prior revision (k8s rollout undo). revision=0 undoes to the previous revision; a positive value rolls back TO that revision (bounded by the Deployment's revisionHistoryLimit, default 10)."
     descriptions:
-      zh: 蓝绿回滚：把服务主地址切回另一个槽（service-promote 的逆操作）。
+      zh: 把服务的 Deployment 回滚到某个 revision（k8s rollout undo）。revision=0 回退到上一个 revision；正数回滚到指定 revision（上限由 Deployment 的 revisionHistoryLimit 决定，默认 10）。
     input_schema:
       type: object
       properties:
@@ -1925,6 +1895,11 @@ tools:
           description: Service name.
           descriptions:
             zh: 服务名。
+        revision:
+          type: integer
+          description: Target revision (0 = the previous revision).
+          descriptions:
+            zh: 目标 revision（0 = 上一个）。
       required:
         - name
     required_config:
@@ -2027,57 +2002,10 @@ tools:
           description: Render + validate only (no apply).
           descriptions:
             zh: 仅渲染+校验（不应用）。
-        slot:
-          type: string
-          enum:
-            - blue
-            - green
-          description: Blue-green slot (empty = a plain release). A slot deploy stores the release as <release>-<slot> and creates/keeps a router Service <release>; the router targets the ACTIVE slot. Deploy green, verify, then helm-promote.
-          descriptions:
-            zh: 蓝绿槽位（空 = 普通 release）。槽位部署会把 release 存为 <release>-<slot>，并创建/保留路由器 Service <release>；路由器指向当前 ACTIVE 槽。先部署 green、验证后再 helm-promote。
       required:
         - release
         - org
         - repo
-    required_config:
-      - gateway-url
-      - gateway-token
-  - name: helm-promote
-    description: "Blue-green Helm promotion: switch the release's router Service to the non-active slot (blue<->green). By default the target slot must be fully ready; force=true overrides. helm-rollback-release switches back."
-    descriptions:
-      zh: 蓝绿 Helm 提升：把 release 的路由器 Service 切到当前非 ACTIVE 的槽（blue<->green）。默认要求目标槽全部就绪；force=true 可强制。helm-rollback-release 可切回。
-    input_schema:
-      type: object
-      properties:
-        release:
-          type: string
-          description: Release (router) name.
-          descriptions:
-            zh: Release（路由器）名称。
-        force:
-          type: boolean
-          description: Promote even if the target slot is not fully ready.
-          descriptions:
-            zh: 即使目标槽未全部就绪也强制提升。
-      required:
-        - release
-    required_config:
-      - gateway-url
-      - gateway-token
-  - name: helm-rollback-release
-    description: "Blue-green Helm rollback: switch the release's router Service back to the other slot (the inverse of helm-promote). Distinct from helm-rollback, which re-applies a chart revision."
-    descriptions:
-      zh: 蓝绿 Helm 回滚：把 release 的路由器 Service 切回另一个槽（helm-promote 的逆操作）。与 helm-rollback（重新应用某个 chart revision）不同。
-    input_schema:
-      type: object
-      properties:
-        release:
-          type: string
-          description: Release (router) name.
-          descriptions:
-            zh: Release（路由器）名称。
-      required:
-        - release
     required_config:
       - gateway-url
       - gateway-token

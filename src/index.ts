@@ -97,7 +97,6 @@ import {
   serviceDeploy,
   serviceList,
   serviceLogs,
-  servicePromote,
   serviceRollback,
   type ServiceCtx,
 } from './tools/services.js'
@@ -111,9 +110,7 @@ import {
   helmDeploy,
   helmHistory,
   helmList,
-  helmPromote,
   helmRollback,
-  helmRollbackRelease,
   helmUninstall,
   helmObjects,
   helmObjectLogs,
@@ -537,7 +534,6 @@ export function createWorkspaceConfig(
 
     // ---- services (long-lived Deployments) ----
     'service-deploy': serviceWrap(serviceDeploy),
-    'service-promote': serviceWrap(servicePromote),
     'service-rollback': serviceWrap(serviceRollback),
     'service-list': serviceWrap(serviceList),
     'service-delete': serviceWrap(serviceDelete),
@@ -547,8 +543,6 @@ export function createWorkspaceConfig(
     'helm-history': helmWrap(helmHistory),
     'helm-rollback': helmWrap(helmRollback),
     'helm-uninstall': helmWrap(helmUninstall),
-    'helm-promote': helmWrap(helmPromote),
-    'helm-rollback-release': helmWrap(helmRollbackRelease),
     'helm-objects': helmWrap(helmObjects),
     'helm-object-logs': helmWrap(helmObjectLogs),
     'pvc-create': pvcWrap(pvcCreate),

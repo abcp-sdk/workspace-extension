@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { helmDeploy, helmHistory, helmList, helmPromote, helmRollback, helmRollbackRelease, helmUninstall, helmObjects, helmObjectLogs, type HelmCtx } from '../src/tools/helm.js'
+import { helmDeploy, helmHistory, helmList, helmRollback, helmUninstall, helmObjects, helmObjectLogs, type HelmCtx } from '../src/tools/helm.js'
 
 function ctx() {
   const calls: Record<string, unknown[]> = { deploy: [], rollback: [], uninstall: [], list: [], history: [] }
@@ -60,47 +60,6 @@ describe('helm tools', () => {
     const res = await helmUninstall(c, { release: 'web' })
     expect(calls.uninstall[0]).toMatchObject({ release: 'web' })
     expect(res.data).toMatchObject({ deleted: true })
-  })
-})
-
-describe('helm blue-green', () => {
-  function slotCtx() {
-    const calls: Record<string, unknown[]> = { deploy: [], promote: [], rollback: [] }
-    const c = {
-      workspace: {
-        async helmDeploy(r: unknown) { calls.deploy.push(r); return { release: { name: 'web-green', revision: 1, slot: 'green', activeSlot: 'blue', status: 'deployed', slots: [{ slot: 'blue', release: 'web-blue', ready: true, readyWorkload: 1, totalWorkload: 1 }, { slot: 'green', release: 'web-green', ready: false, readyWorkload: 0, totalWorkload: 1 }] }, objects: ['Deployment/web-green'] } },
-        async helmPromote(r: unknown) { calls.promote.push(r); return { release: { name: 'web', activeSlot: 'green' } } },
-        async helmRollbackRelease(r: unknown) { calls.rollback.push(r); return { release: { name: 'web', activeSlot: 'blue' } } },
-      },
-      session: 't:r:b',
-      locale: 'en',
-    } as unknown as HelmCtx
-    return { c, calls }
-  }
-
-  it('helm-deploy forwards the slot', async () => {
-    const { c, calls } = slotCtx()
-    const res = await helmDeploy(c, { release: 'web', org: 'o', repo: 'r', slot: 'green' })
-    expect(calls.deploy[0]).toMatchObject({ release: 'web', slot: 'green' })
-    expect(res.data).toMatchObject({ slot: 'green', active_slot: 'blue' })
-  })
-
-  it('rejects an invalid slot', async () => {
-    const { c } = slotCtx()
-    await expect(helmDeploy(c, { release: 'web', org: 'o', repo: 'r', slot: 'purple' })).rejects.toThrow(/slot/)
-  })
-
-  it('helm-promote forwards force and reports the new active slot', async () => {
-    const { c, calls } = slotCtx()
-    const res = await helmPromote(c, { release: 'web', force: true })
-    expect(calls.promote[0]).toMatchObject({ release: 'web', force: true })
-    expect(res.data).toMatchObject({ active_slot: 'green' })
-  })
-
-  it('helm-rollback-release reports the slot', async () => {
-    const { c } = slotCtx()
-    const res = await helmRollbackRelease(c, { release: 'web' })
-    expect(res.data).toMatchObject({ active_slot: 'blue' })
   })
 })
 
