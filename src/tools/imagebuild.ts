@@ -126,3 +126,27 @@ export async function ociImport(
     throw new TypedToolError('internal', tr(ctx.locale, 'imageImportFailed', { image: `${org}/${name}:${tag}`, err: String(e) }))
   }
 }
+
+/**
+ * `repo-build-cancel`: abort a running background image build (started by
+ * `repo-build-image`). Cancels the buildkit process; the build becomes `failed`.
+ * Idempotent (a finished/absent build is a no-op).
+ */
+export async function repoBuildCancel(
+  ctx: BuildCtx,
+  args: Record<string, unknown>,
+): Promise<ToolResultData> {
+  const buildId = strArg(args, 'build-id')
+  if (buildId === '') {
+    throw new TypedToolError('invalid_argument', tr(ctx.locale, 'argRequired', { key: 'build-id' }))
+  }
+  try {
+    const res = await ctx.workspace.cancelBuild({ buildId })
+    return {
+      content: res.ok ? tr(ctx.locale, 'buildCanceled', { id: buildId }) : tr(ctx.locale, 'buildNotRunning', { id: buildId }),
+      data: { build_id: buildId, canceled: res.ok },
+    }
+  } catch (e) {
+    throw new TypedToolError('internal', tr(ctx.locale, 'buildCancelFailed', { id: buildId, err: String(e) }))
+  }
+}

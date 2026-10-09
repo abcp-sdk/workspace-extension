@@ -82,6 +82,7 @@ const EXPECTED_TOOLS = [
   'sandbox-computer-screenshot',
   // repo-*
   'repo-branches',
+  'repo-build-cancel',
   'repo-build-image',
   'repo-build-status',
   'service-delete',
