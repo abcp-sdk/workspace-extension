@@ -42,6 +42,30 @@ function ctxWith(
 }
 
 describe('sandbox-submit-mr change set', () => {
+  it('REFUSES a truncated listing (never diffs it into phantom deletes)', async () => {
+    const cap: Capture = { files: [], base: '' }
+    const c = {
+      client: {
+        // The worker caps the listing and reports it; a client that diffed it
+        // would treat every unseen base file as a DELETE.
+        fileList: async () => ({ isDir: true, files: [], truncated: true }),
+        fileRead: async () => ({ content: new Uint8Array() }),
+      },
+      forgejo: {
+        listTree: async () => new Set(['a.txt', 'b.txt']),
+        getRaw: async () => new Uint8Array(),
+        submitMR: async () => {
+          throw new Error('submitMR must NOT be called on a truncated listing')
+        },
+      },
+      locale: 'en',
+    } as unknown as BridgeCtx
+    const e = await sandboxSubmitMR(c, { org: 'acme', repo: 'web', base: 'main', path: 'myapp' }).catch(x => x)
+    expect((e as { code?: string }).code).toBe('invalid_argument')
+    expect(String(e)).toContain('TRUNCATED')
+    expect(cap.files).toHaveLength(0)
+  })
+
   it('requires base and path', async () => {
     const { c } = ctxWith({})
     const e1 = await sandboxSubmitMR(c, { org: 'acme', repo: 'web', path: 'myapp' }).catch(e => e)
