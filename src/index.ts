@@ -118,7 +118,7 @@ import {
 } from './tools/helm.js'
 
 export const EXT_ID = 'workspace'
-export const EXT_VERSION = '0.19.0'
+export const EXT_VERSION = '0.20.0'
 
 /** Config names (re-exported for tests). */
 export const CONFIG_MANAGER_URL = CONFIG.gatewayUrl

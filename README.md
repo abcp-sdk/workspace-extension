@@ -155,10 +155,10 @@ the repository default branch).
 
 | Tool | Notes |
 |---|---|
-| `service-deploy` / `service-list` / `service-delete` / `service-logs` | run a user image as a long-lived Deployment + Service; blue/green slots |
-| `service-promote` / `service-rollback` | switch the service's public address between blue/green slots |
+| `service-deploy` / `service-list` / `service-delete` / `service-logs` | run a user image as a long-lived Deployment + Service |
+| `service-rollback` | roll a service's Deployment back to a prior revision (k8s rollout undo; `revision=0` = the previous revision) |
 | `helm-deploy` / `helm-list` / `helm-history` / `helm-rollback` / `helm-uninstall` | render + apply a repo chart as a Helm release (one object per revision) |
-| `helm-promote` / `helm-rollback-release` | blue/green slot promotion for a Helm release |
+| `helm-objects` / `helm-object-logs` | live per-object status of a release (kind/name/ready/restarts/failure reason) + one Pod's container log |
 | `pvc-create` / `pvc-list` / `pvc-delete` | admin-managed storage for services |
 
 ## Configuration
