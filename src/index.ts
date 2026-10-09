@@ -93,10 +93,12 @@ import {
 } from './tools/sandbox.js'
 import { ociImport, repoBuildCancel, repoBuildImage, repoBuildStatus, type BuildCtx } from './tools/imagebuild.js'
 import {
+  serviceCreate,
   serviceDelete,
   serviceDeploy,
   serviceList,
   serviceLogs,
+  serviceUpdate,
   serviceRollback,
   type ServiceCtx,
 } from './tools/services.js'
@@ -118,7 +120,7 @@ import {
 } from './tools/helm.js'
 
 export const EXT_ID = 'workspace'
-export const EXT_VERSION = '0.22.0'
+export const EXT_VERSION = '0.23.0'
 
 /** Config names (re-exported for tests). */
 export const CONFIG_MANAGER_URL = CONFIG.gatewayUrl
@@ -534,6 +536,8 @@ export function createWorkspaceConfig(
     'repo-mail-send': mailWrap(repoMailSend),
 
     // ---- services (long-lived Deployments) ----
+    'service-create': serviceWrap(serviceCreate),
+    'service-update': serviceWrap(serviceUpdate),
     'service-deploy': serviceWrap(serviceDeploy),
     'service-rollback': serviceWrap(serviceRollback),
     'service-list': serviceWrap(serviceList),

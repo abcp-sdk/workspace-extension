@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { serviceDeploy, serviceLogs, serviceRollback } from '../src/tools/services.js'
+import { serviceCreate, serviceDeploy, serviceLogs, serviceRollback, serviceUpdate } from '../src/tools/services.js'
 import type { ServiceCtx } from '../src/tools/services.js'
 
 function serviceCtx() {
@@ -129,5 +129,60 @@ describe('service-rollback', () => {
   it('requires a name', async () => {
     const { c } = rbCtx()
     await expect(serviceRollback(c, {})).rejects.toThrow(/name/)
+  })
+})
+
+describe('service-create / service-update', () => {
+  function ctxWith(services: Array<{ name: string }>) {
+    const calls: unknown[] = []
+    const c = {
+      workspace: {
+        async listServices() {
+          return { services }
+        },
+        async deployService(r: unknown) {
+          calls.push(r)
+          return { service: { name: 'web', image: 'img:1', url: 'http://web:80', phase: 'Pending', ready: false, replicas: 1, ports: [] } }
+        },
+      },
+      session: 't:r:b',
+      locale: 'en',
+    } as unknown as ServiceCtx
+    return { c, calls }
+  }
+
+  it('service-create deploys when the name is free', async () => {
+    const { c, calls } = ctxWith([])
+    const res = await serviceCreate(c, { name: 'web', image: 'img:1' })
+    expect(calls[0]).toMatchObject({ name: 'web', image: 'img:1' })
+    expect(res.data).toMatchObject({ name: 'web' })
+  })
+
+  it('service-create refuses when the name exists', async () => {
+    const { c, calls } = ctxWith([{ name: 'web' }])
+    const e = await serviceCreate(c, { name: 'web', image: 'img:1' }).catch(x => x)
+    expect((e as { code?: string }).code).toBe('invalid_argument')
+    expect(String(e)).toContain('already exists')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('service-update deploys when the name exists', async () => {
+    const { c, calls } = ctxWith([{ name: 'web' }])
+    await serviceUpdate(c, { name: 'web', image: 'img:2' })
+    expect(calls[0]).toMatchObject({ name: 'web', image: 'img:2' })
+  })
+
+  it('service-update refuses when the name is missing', async () => {
+    const { c, calls } = ctxWith([])
+    const e = await serviceUpdate(c, { name: 'web', image: 'img:2' }).catch(x => x)
+    expect((e as { code?: string }).code).toBe('invalid_argument')
+    expect(String(e)).toContain('service-create')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('requires a name', async () => {
+    const { c } = ctxWith([])
+    await expect(serviceCreate(c, { image: 'img:1' })).rejects.toThrow(/name/)
+    await expect(serviceUpdate(c, { image: 'img:1' })).rejects.toThrow(/name/)
   })
 })

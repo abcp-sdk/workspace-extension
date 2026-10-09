@@ -2,7 +2,7 @@
 # schemas, required_config). Handlers (execute) live in src/index.ts; the SDK's
 # parseManifest/manifestConfig joins the two, exactly like the other extensions.
 id: workspace
-version: 0.22.0
+version: 0.23.0
 tools:
   - name: sandbox-create
     description: 'Create a sandbox and wait up to 60s for it to become healthy. A sandbox runs a PRE-BUILT image that already bundles the worker — the gateway no longer injects anything. `image` must be one of the deployment sandbox images from the dedicated sandbox org (see list-oci-images with owner="sandbox"); omit it for the deployment default. A name is never reused: if a sandbox with this name already exists the call is refused — delete it first with sandbox-delete. Returns the sandbox name, its in-cluster service DNS, and the worker environment (OS/arch, workspace root, boot id).'
@@ -1405,6 +1405,131 @@ tools:
         - name
         - tag
         - source
+    required_config:
+      - gateway-url
+      - gateway-token
+  - name: service-create
+    description: "Create a NEW long-lived service (image + ports). Refuses when a service of that name already exists (use service-update instead). Same as service-deploy with an existence guard."
+    descriptions:
+      zh: 新建一个长期运行的服务（镜像 + 端口）。若同名服务已存在则拒绝（请用 service-update）。等同于 service-deploy 加存在性校验。
+    input_schema:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Service name (a DNS-1123 label).
+          descriptions:
+            zh: 服务名（DNS-1123 label）。
+        image:
+          type: string
+          description: Container image (from the deployment registry).
+          descriptions:
+            zh: 容器镜像（来自部署 registry）。
+        container-port:
+          type: integer
+          description: The container's listening port.
+          descriptions:
+            zh: 容器监听端口。
+        service-port:
+          type: integer
+          description: The exposed Service port (default 80).
+          descriptions:
+            zh: 暴露的 Service 端口（默认 80）。
+        replicas:
+          type: integer
+          description: Desired replica count (default 1).
+          descriptions:
+            zh: 期望副本数（默认 1）。
+        env:
+          type: object
+          additionalProperties:
+            type: string
+          description: Environment variables.
+          descriptions:
+            zh: 环境变量。
+        cpu:
+          type: string
+          description: CPU request (e.g. 100m).
+          descriptions:
+            zh: CPU 请求（如 100m）。
+        memory:
+          type: string
+          description: Memory request (e.g. 128Mi).
+          descriptions:
+            zh: 内存请求（如 128Mi）。
+        command:
+          type: array
+          items:
+            type: string
+          description: Container argv override.
+          descriptions:
+            zh: 容器 argv 覆盖。
+        volumes:
+          type: array
+          description: PVC mounts (tenant-owned claims), each {pvc, mount-path, read-only, sub-path}.
+          descriptions:
+            zh: PVC 挂载（本租户所有），每项 {pvc, mount-path, read-only, sub-path}。
+          items:
+            type: object
+            properties:
+              pvc:
+                type: string
+              mount-path:
+                type: string
+              read-only:
+                type: boolean
+              sub-path:
+                type: string
+            required:
+              - pvc
+              - mount-path
+      required:
+        - name
+        - image
+    required_config:
+      - gateway-url
+      - gateway-token
+  - name: service-update
+    description: "Change an EXISTING service (image/env/replicas/ports/...). Refuses when the service does not exist (use service-create instead). Same as service-deploy with an existence guard."
+    descriptions:
+      zh: 修改已存在的服务（镜像/环境/副本/端口等）。服务不存在则拒绝（请用 service-create）。等同于 service-deploy 加存在性校验。
+    input_schema:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Service name.
+          descriptions:
+            zh: 服务名。
+        image:
+          type: string
+          description: Container image.
+          descriptions:
+            zh: 容器镜像。
+        container-port:
+          type: integer
+        service-port:
+          type: integer
+        replicas:
+          type: integer
+        env:
+          type: object
+          additionalProperties:
+            type: string
+        cpu:
+          type: string
+        memory:
+          type: string
+        command:
+          type: array
+          items:
+            type: string
+        volumes:
+          type: array
+          items:
+            type: object
+      required:
+        - name
     required_config:
       - gateway-url
       - gateway-token
