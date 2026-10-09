@@ -118,9 +118,18 @@ import {
   helmObjectLogs,
   type HelmCtx,
 } from './tools/helm.js'
+import {
+  configPut,
+  configList,
+  configDelete,
+  secretPut,
+  secretList,
+  secretDelete,
+  type ConfigStoreContext,
+} from './tools/configstore.js'
 
 export const EXT_ID = 'workspace'
-export const EXT_VERSION = '0.23.0'
+export const EXT_VERSION = '0.24.0'
 
 /** Config names (re-exported for tests). */
 export const CONFIG_MANAGER_URL = CONFIG.gatewayUrl
@@ -428,6 +437,17 @@ export function createWorkspaceConfig(
       return fn({ workspace: managerFor(s, t, locale), locale }, args ?? {})
     }
 
+  /** Wrap a config-* / secret-* (workspace gateway) tool. */
+  const configWrap = (
+    fn: (ctx: ConfigStoreContext, args: Record<string, unknown>) => Promise<ToolResultData>,
+  ): ToolSpec['execute'] =>
+    async (args, _callId, sessionName, _signal, tenant) => {
+      const t = tenant ?? ''
+      const s = sessionName ?? ''
+      const locale = await localeOf(deps, t, s)
+      return fn({ workspace: managerFor(s, t, locale), locale }, args ?? {})
+    }
+
   /** Wrap a bridge (repo + worker) tool. */
   const bridgeWrap = (
     fn: (ctx: BridgeCtx, args: Record<string, unknown>) => Promise<ToolResultData>,
@@ -553,6 +573,12 @@ export function createWorkspaceConfig(
     'pvc-create': pvcWrap(pvcCreate),
     'pvc-list': pvcWrap(pvcList),
     'pvc-delete': pvcWrap(pvcDelete),
+    'config-put': configWrap(configPut),
+    'config-list': configWrap(configList),
+    'config-delete': configWrap(configDelete),
+    'secret-put': configWrap(secretPut),
+    'secret-list': configWrap(secretList),
+    'secret-delete': configWrap(secretDelete),
     'repo-file-read': repoWrap(repoRead),
     'repo-file-list': repoWrap(repoList),
     'repo-log': repoWrap(repoLog),

@@ -350,6 +350,62 @@ export const CATALOG = {
     en: "pvc-delete failed for '{name}': {err}",
     zh: "pvc-delete 失败（'{name}'）：{err}",
   },
+  configPut: {
+    en: "ConfigMap '{name}' written ({keys} keys).",
+    zh: "已写入 ConfigMap '{name}'（{keys} 个键）。",
+  },
+  configPutFailed: {
+    en: "config-put failed for '{name}': {err}",
+    zh: "config-put 失败（'{name}'）：{err}",
+  },
+  configNone: {
+    en: 'No ConfigMaps.',
+    zh: '没有 ConfigMap。',
+  },
+  configListHeader: {
+    en: 'ConfigMaps ({count}):',
+    zh: 'ConfigMap（{count} 个）：',
+  },
+  configListFailed: {
+    en: 'config-list failed: {err}',
+    zh: 'config-list 失败：{err}',
+  },
+  configDeleted: {
+    en: "Deleted ConfigMap '{name}'.",
+    zh: "已删除 ConfigMap '{name}'。",
+  },
+  configDeleteFailed: {
+    en: "config-delete failed for '{name}': {err}",
+    zh: "config-delete 失败（'{name}'）：{err}",
+  },
+  secretPut: {
+    en: "Secret '{name}' written ({keys} keys).",
+    zh: "已写入 Secret '{name}'（{keys} 个键）。",
+  },
+  secretPutFailed: {
+    en: "secret-put failed for '{name}': {err}",
+    zh: "secret-put 失败（'{name}'）：{err}",
+  },
+  secretNone: {
+    en: 'No Secrets.',
+    zh: '没有 Secret。',
+  },
+  secretListHeader: {
+    en: 'Secrets ({count}):',
+    zh: 'Secret（{count} 个）：',
+  },
+  secretListFailed: {
+    en: 'secret-list failed: {err}',
+    zh: 'secret-list 失败：{err}',
+  },
+  secretDeleted: {
+    en: "Deleted Secret '{name}'.",
+    zh: "已删除 Secret '{name}'。",
+  },
+  secretDeleteFailed: {
+    en: "secret-delete failed for '{name}': {err}",
+    zh: "secret-delete 失败（'{name}'）：{err}",
+  },
   serviceLogsFailed: {
     en: "service-logs failed for '{name}': {err}",
     zh: "读取 '{name}' 日志失败：{err}",
